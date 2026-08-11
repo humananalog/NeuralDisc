@@ -118,12 +118,35 @@ def analyse_media(
     model_version = "0.1.0"
 
     if settings.vlm_enabled:
+        from neuraldisc.mlx_plane_lease import MlxPlaneLeaseError, ensure_lease_held
+
+        try:
+            ensure_lease_held(vlm_enabled=True, purpose="vlm_batch")
+        except MlxPlaneLeaseError as exc:
+            # Do not write heuristic — leave pending so we retry when plane is free
+            log.warning(
+                "vlm_deferred_no_lease",
+                media_id=media.id,
+                reason=exc.reason,
+                blocker=exc.blocker,
+            )
+            return None
+
         image_path = Path(media.library_path)
         # Prefer preview derivative for speed if available
         preview = settings.previews_dir / f"{media.id}.jpg"
         if preview.exists():
             image_path = preview
-        result = _run_mlx_vlm(image_path, settings)
+        try:
+            result = _run_mlx_vlm(image_path, settings)
+        except MlxPlaneLeaseError as exc:
+            log.warning(
+                "vlm_deferred_no_lease",
+                media_id=media.id,
+                reason=exc.reason,
+                blocker=exc.blocker,
+            )
+            return None
         if result:
             model_name = settings.vlm_model
             model_version = "mlx-vlm"
@@ -226,7 +249,25 @@ def _heuristic_analysis(media: MediaItem) -> dict[str, Any]:
 
 
 def _get_model(settings: Settings) -> tuple[Any, Any, Any]:
-    """Load and cache model/processor/config once per process."""
+    """Load and cache model/processor/config once per process.
+
+    Requires a valid peer MLX plane lease when lease gating is active.
+    """
+    from neuraldisc.mlx_plane_lease import (
+        MlxPlaneLeaseError,
+        current_lease,
+        ensure_lease_held,
+        lease_required,
+    )
+
+    if lease_required(vlm_enabled=settings.vlm_enabled):
+        ensure_lease_held(vlm_enabled=True, purpose="vlm_batch")
+        if current_lease() is None:
+            raise MlxPlaneLeaseError(
+                "Cannot load VLM without an active MLX plane lease",
+                reason="no_lease",
+            )
+
     key = settings.vlm_model
     with _model_lock:
         if key in _model_cache:
@@ -248,11 +289,13 @@ def _get_model(settings: Settings) -> tuple[Any, Any, Any]:
         return model, processor, config
 
 
-def release_vlm(*, force: bool = False) -> dict[str, Any]:
-    """Unload cached VLM weights and clear MLX Metal cache.
+def release_vlm(
+    *, force: bool = False, release_plane_lease: bool = True
+) -> dict[str, Any]:
+    """Unload VLM weights, clear MLX Metal cache, and drop peer plane lease.
 
-    Call after inference batches so other apps (e.g. mlx_lm server on :8088)
-    can reclaim unified memory. Safe to call when nothing is loaded.
+    Call after inference batches so ViniMidas / peers can reclaim unified memory.
+    Safe to call when nothing is loaded.
     """
     global _load_refcount
     with _load_refcount_lock:
@@ -290,12 +333,23 @@ def release_vlm(*, force: bool = False) -> dict[str, Any]:
         if force:
             _load_refcount = 0
 
+    plane_lease: dict[str, Any] = {"released": False, "reason": "skipped"}
+    if release_plane_lease:
+        try:
+            from neuraldisc.mlx_plane_lease import release as release_lease
+
+            plane_lease = release_lease()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mlx_plane_lease_release_failed", error=str(exc))
+            plane_lease = {"released": False, "error": str(exc)}
+
     log.info(
         "vlm_released",
         models=freed_models,
         force=force,
         metal_before=metal_before,
         metal_after=metal_after,
+        plane_lease=plane_lease.get("released"),
     )
     return {
         "released": True,
@@ -303,17 +357,39 @@ def release_vlm(*, force: bool = False) -> dict[str, Any]:
         "metal_active_before": metal_before,
         "metal_active_after": metal_after,
         "refcount": _load_refcount,
+        "plane_lease": plane_lease,
     }
 
 
 class vlm_session:
-    """Context manager: keep model loaded for a batch, release MLX on exit."""
+    """Acquire peer lease, keep model loaded for a batch, release MLX on exit."""
 
-    def __init__(self, *, release_on_exit: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        release_on_exit: bool = True,
+        purpose: str = "vlm_batch",
+        holder_id: str | None = None,
+    ) -> None:
         self.release_on_exit = release_on_exit
+        self.purpose = purpose
+        self.holder_id = holder_id
 
     def __enter__(self) -> "vlm_session":
         global _load_refcount
+        from neuraldisc.config import get_settings
+        from neuraldisc.mlx_plane_lease import (
+            acquire,
+            current_lease,
+            ensure_lease_held,
+        )
+
+        settings = get_settings()
+        if settings.vlm_enabled:
+            if self.holder_id and current_lease() is None:
+                acquire(self.holder_id, purpose=self.purpose)
+            else:
+                ensure_lease_held(vlm_enabled=True, purpose=self.purpose)
         with _load_refcount_lock:
             _load_refcount += 1
         return self
@@ -359,6 +435,16 @@ def _run_mlx_vlm(path: Path, settings: Settings) -> dict[str, Any] | None:
             log.warning("vlm_json_parse_failed", sample=text[:200], chars=len(text))
         return parsed
     except Exception as exc:  # noqa: BLE001
+        from neuraldisc.mlx_plane_lease import MlxPlaneLeaseError
+
+        if isinstance(exc, MlxPlaneLeaseError):
+            log.warning(
+                "mlx_vlm_lease_blocked",
+                error=str(exc),
+                reason=exc.reason,
+                path=str(path),
+            )
+            raise
         log.warning("mlx_vlm_failed", error=str(exc), path=str(path))
         return None
 
@@ -530,6 +616,8 @@ def vlm_status(settings: Settings) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         metal = {"available": False, "error": str(exc)}
 
+    from neuraldisc.mlx_plane_lease import lease_status
+
     return {
         "available": True,
         "enabled": settings.vlm_enabled,
@@ -539,4 +627,5 @@ def vlm_status(settings: Settings) -> dict[str, Any]:
         "refcount": _load_refcount,
         "mlx_ok": mlx_ok,
         "metal": metal,
+        "plane_lease": lease_status(vlm_enabled=settings.vlm_enabled),
     }

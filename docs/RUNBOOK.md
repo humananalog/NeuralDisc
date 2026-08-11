@@ -137,8 +137,38 @@ export NEURALDISC_VLM_ENABLED=true           # local mlx-vlm during process / In
 
 1. Enable VLM in Settings (+ HF token if the model is gated).  
 2. **Inference** page: queue heuristics / pending; **Run** batch or **Re-run** one item.  
-3. After jobs finish, MLX is **released** automatically; or click **Release MLX** for peer apps (`mlx_lm` on :8088, etc.).  
+3. After jobs finish, MLX is **released** automatically; or click **Release MLX** for peer apps.  
 4. `POST /api/inference/release` if scripting.
+
+### Coexistence with ViniMidas (peer MLX plane lease)
+
+On the shared Mac Mini, **ViniMidas owns the Metal slot** (`:8088` mlx_lm). NeuralDisc must take a short-TTL **peer lease** via ViniMidas MCP HTTP before loading in-process mlx-vlm. NeuralDisc never writes Supabase `runtime_plane_holds` and never binds/kills `:8088`.
+
+```bash
+# From Mac Mini .env.local (or a NeuralDisc-only copy of the secret)
+export VINIMIDAS_MCP_HTTP_URL=http://127.0.0.1:3100
+export VINIMIDAS_MCP_HTTP_SECRET=…   # same Bearer as other MCP tools
+
+export NEURALDISC_MLX_PEER_ID=neuraldisc          # must be allowlisted on ViniMidas
+export NEURALDISC_MLX_LEASE_TTL_MS=600000         # 10m default
+export NEURALDISC_MLX_LEASE_RENEW_INTERVAL_MS=300000  # renew ≤ TTL/2
+export NEURALDISC_MLX_LEASE_MAX_WAIT_MS=120000
+# Optional: force on/off (default = lease when secret is set)
+# export NEURALDISC_MLX_LEASE_REQUIRED=1
+```
+
+Lifecycle:
+
+1. Inference / import VLM paths call `acquire_mlx_plane_lease` (`peer_id=neuraldisc`).  
+2. Background renew while the batch holds Metal.  
+3. On job end or **Release MLX**: unload weights + clear Metal cache + `release_mlx_plane_lease`.  
+4. If Vinimidas steals the plane (renew fails / non-peer holder): NeuralDisc unloads immediately and retries later.  
+5. Crash / missed renew: TTL expiry frees the plane without manual cleanup.
+
+Inspect: `GET /api/inference/plane-lease` · status includes `plane_lease` on `GET /api/inference/status`.  
+Busy plane: reanalyse returns **503** with `blocker`; batch jobs fail with `mlx_plane_busy:…` and leave items pending.
+
+Solo Mac without ViniMidas: leave the secret unset (or `NEURALDISC_MLX_LEASE_REQUIRED=0`).
 
 ### Jobs: cancel, resume, stale, auto-resume
 

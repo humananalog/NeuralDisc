@@ -247,6 +247,7 @@ def inference_status(db: Session = Depends(get_db)) -> dict:
         "vlm_loaded": vlm.get("loaded", False),
         "vlm_refcount": vlm.get("refcount", 0),
         "metal": vlm.get("metal") or {},
+        "plane_lease": vlm.get("plane_lease") or {},
         "active_job": (
             {
                 "id": active_job.id,
@@ -264,8 +265,25 @@ def inference_status(db: Session = Depends(get_db)) -> dict:
 
 @router.post("/release")
 def release_mlx_plane() -> dict:
-    """Unload VLM weights and clear MLX Metal cache for other apps (e.g. :8088)."""
+    """Unload VLM weights, clear MLX cache, and release ViniMidas peer plane lease."""
     return release_vlm(force=True)
+
+
+@router.get("/plane-lease")
+def plane_lease_status() -> dict:
+    """Inspect NeuralDisc peer MLX lease state (local + optional MCP get)."""
+    from neuraldisc.mlx_plane_lease import get_lease, lease_status, MlxPlaneLeaseError
+
+    settings = get_settings()
+    local = lease_status(vlm_enabled=settings.vlm_enabled)
+    remote: dict | None = None
+    remote_error: str | None = None
+    if local.get("configured"):
+        try:
+            remote = get_lease()
+        except MlxPlaneLeaseError as exc:
+            remote_error = str(exc)
+    return {"local": local, "remote": remote, "remote_error": remote_error}
 
 
 @router.get("/queue")
@@ -344,7 +362,11 @@ def reanalyse_one(
     if not media:
         raise HTTPException(404, "Media not found")
     try:
-        with vlm_session(release_on_exit=not keep_loaded):
+        with vlm_session(
+            release_on_exit=not keep_loaded,
+            purpose="vlm_reanalyse",
+            holder_id=f"neuraldisc-reanalyse-{media_id[:8]}",
+        ):
             analysis = reanalyse_media(db, media, settings)
         db.commit()
         db.refresh(media)
@@ -352,6 +374,18 @@ def reanalyse_one(
         db.rollback()
         if not keep_loaded:
             release_vlm(force=True)
+        from neuraldisc.mlx_plane_lease import MlxPlaneLeaseError
+
+        if isinstance(exc, MlxPlaneLeaseError):
+            raise HTTPException(
+                503,
+                detail={
+                    "error": "mlx_plane_busy",
+                    "message": str(exc),
+                    "reason": exc.reason,
+                    "blocker": exc.blocker,
+                },
+            ) from exc
         raise HTTPException(500, f"Reanalyse failed: {exc}") from exc
     return {
         "media_id": media_id,
@@ -459,8 +493,42 @@ def _run_inference_job(job_id: str, media_ids: list[str]) -> None:
                 job.started_at = datetime.now(timezone.utc)
                 job.message = f"Analysing 0/{len(media_ids)}"
 
-        # Hold VLM for the whole batch; release_vlm() on exit frees MLX for other apps
-        with vlm_session(release_on_exit=True):
+        # Hold VLM for the whole batch; release_vlm() on exit frees MLX + peer lease
+        try:
+            session_cm = vlm_session(
+                release_on_exit=True,
+                purpose="vlm_batch",
+                holder_id=f"neuraldisc-inference-{job_id[:12]}",
+            )
+            session_cm.__enter__()
+        except Exception as lease_exc:  # noqa: BLE001
+            from neuraldisc.mlx_plane_lease import MlxPlaneLeaseError
+
+            if isinstance(lease_exc, MlxPlaneLeaseError):
+                with session_scope() as session:
+                    job = session.get(Job, job_id)
+                    if job and job.status in ("queued", "running"):
+                        job.status = "failed"
+                        job.finished_at = datetime.now(timezone.utc)
+                        job.error = f"mlx_plane_busy:{lease_exc.reason}"
+                        job.message = (
+                            f"MLX plane lease unavailable"
+                            + (
+                                f" ({lease_exc.blocker})"
+                                if lease_exc.blocker
+                                else f" ({lease_exc.reason})"
+                            )
+                        )
+                log.warning(
+                    "inference_lease_blocked",
+                    job_id=job_id,
+                    reason=lease_exc.reason,
+                    blocker=lease_exc.blocker,
+                )
+                return
+            raise
+
+        try:
             for mid in media_ids:
                 if is_cancel_requested(job_id):
                     with session_scope() as session:
@@ -485,6 +553,16 @@ def _run_inference_job(job_id: str, media_ids: list[str]) -> None:
                             reanalyse_media(session, media, settings)
                     done += 1
                 except Exception as exc:  # noqa: BLE001
+                    from neuraldisc.mlx_plane_lease import MlxPlaneLeaseError
+
+                    if isinstance(exc, MlxPlaneLeaseError):
+                        errors += 1
+                        log.warning(
+                            "inference_lease_lost",
+                            media_id=mid,
+                            reason=exc.reason,
+                        )
+                        break
                     errors += 1
                     log.warning("inference_item_failed", media_id=mid, error=str(exc))
 
@@ -502,6 +580,8 @@ def _run_inference_job(job_id: str, media_ids: list[str]) -> None:
                         f"Analysed {done}/{len(media_ids)}"
                         + (f" · {errors} errors" if errors else "")
                     )
+        finally:
+            session_cm.__exit__(None, None, None)
 
         with session_scope() as session:
             job = session.get(Job, job_id)

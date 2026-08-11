@@ -108,7 +108,11 @@ def process_disc(disc_id: str, job_id: str | None = None) -> None:
 
     cancelled = False
     # Hold VLM for the whole disc batch; release on exit for peer MLX apps
-    with vlm_session(release_on_exit=True):
+    with vlm_session(
+        release_on_exit=True,
+        purpose="post_ingest_vlm",
+        holder_id=f"neuraldisc-post-ingest-{disc_id[:12]}",
+    ):
         for i, mid in enumerate(media_ids):
             if job_id and is_cancel_requested(job_id):
                 cancelled = True

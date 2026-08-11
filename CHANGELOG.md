@@ -5,6 +5,15 @@ All notable changes to NeuralDisc are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.7] — 2026-08-12
+
+### Added
+- **ViniMidas peer MLX plane lease**: acquire / renew / release via MCP HTTP before loading mlx-vlm; Release MLX also drops the lease; `GET /api/inference/plane-lease`
+- RUNBOOK section for Mac Mini coexistence with ViniMidas `:8088`
+
+### Changed
+- VLM batches defer (no heuristic write) when the plane lease cannot be acquired; reanalyse returns 503 with blocker
+
 ## [0.3.6] — 2026-08-11
 
 ### Fixed
@@ -136,6 +145,7 @@ First full application release: local library backend, Next.js UI, high-throughp
 
 ---
 
+[0.3.7]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.7
 [0.3.6]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.6
 [0.3.5]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.5
 [0.3.4]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.4

@@ -113,6 +113,15 @@ class Settings(BaseSettings):
     # Auto-chain/supervisor stop retrying after this many consecutive VLM failures
     vlm_auto_retry_max: int = 2
 
+    # Peer MLX plane lease (ViniMidas MCP) — see neuraldisc.mlx_plane_lease
+    # Secret/URL read from VINIMIDAS_MCP_HTTP_* (or NEURALDISC_VINIMIDAS_MCP_HTTP_*)
+    mlx_peer_id: str = "neuraldisc"
+    mlx_lease_ttl_ms: int = 600_000
+    mlx_lease_renew_interval_ms: int = 300_000
+    mlx_lease_max_wait_ms: int = 120_000
+    # None/unset in env → auto (required when MCP secret present). Use 0/1 to force.
+    mlx_lease_required: bool | None = None
+
     # Jobs
     redis_url: str = "redis://localhost:6379/0"
     use_redis: bool = False
