@@ -1,0 +1,47 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+
+# Library data (local) — do not match Python package backend/neuraldisc/
+/data/
+/data/**
+# Runtime library trees only (capital N NeuralDisc under user data paths)
+**/data/NeuralDisc/
+**/NeuralDisc/library/
+**/NeuralDisc/logs/
+**/NeuralDisc/db/*.sqlite
+**/NeuralDisc/db/*.sqlite-*
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.env
+.env.local
+*.pem
+*.key
+secrets.enc
+.master.key
+
+# Never commit secrets (also live in ~/.neuraldisc/ outside the repo)
+**/.neuraldisc/
+
+# Test artefacts
+tests/_tmp_library/

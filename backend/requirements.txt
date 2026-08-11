@@ -1,0 +1,33 @@
+# Core (Phase 0–1)
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+sqlalchemy>=2.0.36
+aiosqlite>=0.20.0
+alembic>=1.14.0
+pillow>=11.0.0
+imagehash>=4.3.1
+python-magic>=0.4.27
+aiofiles>=24.1.0
+structlog>=24.4.0
+httpx>=0.28.0
+python-multipart>=0.0.17
+watchdog>=6.0.0
+numpy>=2.1.0
+typer>=0.15.0
+rich>=13.9.0
+websockets>=14.0
+
+# Optional AI (Phase 2+) — install with: pip install -e ".[ai]"
+# mlx
+# mlx-vlm
+# lancedb
+
+# Optional job queue — install with: pip install -e ".[redis]"
+# redis
+# rq
+
+# Dev
+pytest>=8.3.0
+pytest-asyncio>=0.24.0

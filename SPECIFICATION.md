@@ -424,6 +424,26 @@ Deliverables:
 - Crash recovery, resume, observability.
 - README, deployment scripts, first real disc end-to-end test.
 
+### Implementation status (v0.2.0 — 2026-08)
+
+Phases **0–4 are largely implemented** in this repository; Phase 5 is partial.
+
+| Deliverable | Status |
+|-------------|--------|
+| Disc/folder/batch import, stage-first promote on target volume | Shipped |
+| Quality gates, blur, exiftool-only metadata, derivatives | Shipped |
+| Auto-orient (EXIF + content) + batch rotate | Shipped |
+| Duplicates (exact/pHash) + keep-best batch / all groups | Shipped |
+| Trash + permanent delete (FK-safe) + restore | Shipped |
+| Job cancel (cooperative) | Shipped |
+| FastAPI REST surface (see docs/API.md) | Shipped |
+| Next.js UI: library, filters, import live, detail inference, lightbox | Shipped |
+| Settings + encrypted secrets store | Shipped |
+| mlx-vlm full production tuning | Optional / ongoing |
+| Face people clusters, MapLibre, album auto-org commit | Not yet |
+
+See **CHANGELOG.md** and **RELEASE_NOTES.md** for the user-facing release.
+
 ---
 
 ## 9. Phase 0 / Phase 1 Concrete Next Steps

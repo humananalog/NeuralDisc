@@ -314,6 +314,10 @@ Mobile phones are out of scope for v1 (local network usage is desktop-centric).
 4. HITL queue is the default landing page when pending items > 0.
 5. Every AI field must support one-click “promote to human” or inline edit.
 6. Permanent delete always shows a confirmation modal with count of items affected and a “type DELETE to confirm” for large batches.
+7. Double-click (or Backspace on selection) expands the image in an in-app lightbox; Esc/Backspace closes; arrows navigate.
+8. Multi-select supports batch **Auto-rotate**, **Keep best**, and **Delete** from the library selection bar.
+9. Left nav shows live counters for every section (`/api/stats/nav`).
+10. Top filter chips (Photos, Video, Pending, Duplicates, Blurry, Trash) update the grid immediately.
 
 ---
 

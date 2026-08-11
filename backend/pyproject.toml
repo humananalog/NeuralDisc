@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "neuraldisc"
+version = "0.2.0"
+description = "Fully autonomous, local-first photo & video library for Apple Silicon"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Alex Huther" }]
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "sqlalchemy>=2.0.36",
+    "aiosqlite>=0.20.0",
+    "alembic>=1.14.0",
+    "pillow>=11.0.0",
+    "imagehash>=4.3.1",
+    "python-magic>=0.4.27",
+    "aiofiles>=24.1.0",
+    "structlog>=24.4.0",
+    "httpx>=0.28.0",
+    "python-multipart>=0.0.17",
+    "tomli>=2.0.0; python_version < '3.11'",
+    "watchdog>=6.0.0",
+    "numpy>=2.1.0",
+    "typer>=0.15.0",
+    "rich>=13.9.0",
+    "websockets>=14.0",
+    "cryptography>=43.0.0",
+]
+
+[project.optional-dependencies]
+ai = [
+    "mlx>=0.20.0; sys_platform == 'darwin'",
+    "mlx-vlm>=0.1.0; sys_platform == 'darwin'",
+    "lancedb>=0.17.0",
+]
+redis = [
+    "redis>=5.2.0",
+    "rq>=2.0.0",
+]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.8.0",
+    "httpx>=0.28.0",
+]
+
+[project.scripts]
+neuraldisc = "neuraldisc.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["neuraldisc"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["../tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
