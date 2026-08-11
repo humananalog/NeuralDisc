@@ -19,11 +19,9 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy.orm import joinedload
-
 from neuraldisc.config import Settings, get_settings
 from neuraldisc.db.database import session_scope
-from neuraldisc.db.models import Job, MediaAnalysis, MediaItem
+from neuraldisc.db.models import Job, MediaItem
 from neuraldisc.jobs.control import live_worker_ids
 from neuraldisc.utils.logging import get_logger
 
@@ -39,7 +37,8 @@ _STATE: dict[str, Any] = {
     "ticks": 0,
 }
 _LAST_INFERENCE_AUTO: float = 0.0
-_INFERENCE_COOLDOWN_SEC = 120.0
+# Only prevents double-start races; job completion chains the next batch
+_INFERENCE_COOLDOWN_SEC = 15.0
 
 
 def get_supervisor_state() -> dict[str, Any]:
@@ -327,79 +326,40 @@ def _auto_resume_post_ingest() -> str | None:
     return job_id
 
 
-def _is_heuristic(model_name: str | None) -> bool:
-    m = (model_name or "").lower()
-    return "heuristic" in m or m in ("quality-gate", "none", "")
-
-
-def _collect_inference_ids(limit: int, *, force_heuristic: bool) -> list[str]:
-    """Library items missing analysis or stuck on heuristic fallback."""
-    with session_scope() as session:
-        items = (
-            session.query(MediaItem)
-            .options(joinedload(MediaItem.analysis))
-            .filter(MediaItem.lifecycle == "library")
-            .order_by(MediaItem.created_at.asc())
-            .limit(limit * 4)
-            .all()
-        )
-        ids: list[str] = []
-        for m in items:
-            if m.analysis is None:
-                ids.append(m.id)
-            elif force_heuristic and _is_heuristic(m.analysis.model_name):
-                ids.append(m.id)
-            if len(ids) >= limit:
-                break
-        return ids
-
-
 def _auto_start_inference(settings: Settings) -> int:
-    """Start a background inference batch if the queue is non-empty."""
+    """Start a background inference batch if heuristic/failed-VLM queue is non-empty."""
     global _LAST_INFERENCE_AUTO
     now = time.time()
+    # Short cooldown only — chain after each job also continues the drain
     if now - _LAST_INFERENCE_AUTO < _INFERENCE_COOLDOWN_SEC:
         return 0
 
-    force = True  # upgrade heuristics + missing analysis
-    ids = _collect_inference_ids(
-        settings.auto_resume_inference_limit, force_heuristic=force
+    from neuraldisc.api.routes.inference import (
+        collect_inference_queue_ids,
+        count_inference_queue,
+        start_inference_job,
     )
+
+    with session_scope() as session:
+        counts = count_inference_queue(session, force_heuristic=True)
+        if counts["queue"] <= 0:
+            return 0
+        ids = collect_inference_queue_ids(
+            session,
+            limit=settings.auto_resume_inference_limit,
+            force_heuristic=True,
+        )
     if not ids:
         return 0
 
-    import threading
-
-    from neuraldisc.api.routes.inference import _run_inference_job
-    from neuraldisc.jobs.control import register_job
-
-    with session_scope() as session:
-        job = Job(
-            job_type="inference",
-            status="queued",
-            message=f"Auto-resume inference: {len(ids)} items",
-            total=len(ids),
-            completed=0,
-            progress=0.0,
-            payload=json.dumps(
-                {
-                    "media_ids": ids,
-                    "force_heuristic": force,
-                    "auto_resume": True,
-                }
-            ),
-        )
-        session.add(job)
-        session.flush()
-        job_id = job.id
-
-    register_job(job_id)
     _LAST_INFERENCE_AUTO = now
-    threading.Thread(
-        target=_run_inference_job,
-        args=(job_id, ids),
-        name=f"auto-infer-{job_id[:8]}",
-        daemon=True,
-    ).start()
-    log.info("auto_resume_inference", job_id=job_id, n=len(ids))
+    res = start_inference_job(
+        ids, force_heuristic=True, reason="auto-resume-heuristic"
+    )
+    log.info(
+        "auto_resume_inference",
+        job_id=res.get("job_id"),
+        n=len(ids),
+        total_queue=counts["queue"],
+    )
     return len(ids)

@@ -51,7 +51,8 @@ Default: **serial copy** to `library/staging`, then **background process**. Impo
 |--------|------|-------------|
 | GET | `/api/inference/status` | Coverage, queue size, VLM loaded, Metal memory, active job |
 | GET | `/api/inference/queue` | `mode=pending\|heuristic\|all` |
-| POST | `/api/inference/run` | Batch re-analyse (`limit`, `force_heuristic`) |
+| POST | `/api/inference/run` | Batch re-analyse (`limit`, `force_heuristic` default true) |
+| POST | `/api/inference/requeue-heuristic` | Re-queue **all** heuristic / failed-VLM library items |
 | POST | `/api/inference/{media_id}/reanalyse` | One item (`keep_loaded` default false → release MLX) |
 | POST | `/api/inference/release` | Unload VLM + clear Metal cache |
 

@@ -105,6 +105,9 @@ def analyse_media(session: Session, media: MediaItem, settings: Settings) -> Med
     if result is None:
         if settings.vlm_enabled:
             log.warning("vlm_fallback_heuristic", media_id=media.id)
+            # Tag so auto-requeue / Inference queue always picks these up
+            model_name = "heuristic-fallback"
+            model_version = "vlm-failed"
         result = _heuristic_analysis(media)
 
     result = _normalize_result(result, media)
@@ -134,10 +137,13 @@ def analyse_media(session: Session, media: MediaItem, settings: Settings) -> Med
 
 def reanalyse_media(session: Session, media: MediaItem, settings: Settings) -> MediaAnalysis | None:
     """Force re-run VLM (delete existing analysis)."""
-    if media.analysis:
-        session.delete(media.analysis)
-        session.flush()
-        media.analysis = None
+    # Use bulk delete to avoid SQLAlchemy relationship nulling the PK on MediaAnalysis
+    session.query(MediaAnalysis).filter(MediaAnalysis.media_id == media.id).delete(
+        synchronize_session=False
+    )
+    session.expire(media, ["analysis"])
+    media.analysis = None
+    session.flush()
     return analyse_media(session, media, settings)
 
 

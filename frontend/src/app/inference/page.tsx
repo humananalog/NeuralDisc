@@ -92,7 +92,8 @@ export default function InferencePage() {
     setError(null);
     setMsg(null);
     try {
-      const res = await api.runInference(100, true);
+      // Prefer full requeue of all heuristic / failed-VLM items
+      const res = await api.requeueHeuristic(500);
       setMsg(res.message);
       if (res.job_id) setRunningId(res.job_id);
       await load();
@@ -184,7 +185,7 @@ export default function InferencePage() {
             className="inline-flex items-center gap-1.5 rounded-md bg-[var(--ai)] px-3 py-1.5 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40"
           >
             <Play className="h-3.5 w-3.5" />
-            {busy ? "Starting…" : "Run queue (100)"}
+            {busy ? "Starting…" : "Re-queue all heuristics"}
           </button>
         </div>
       </div>

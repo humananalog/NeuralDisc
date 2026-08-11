@@ -474,10 +474,21 @@ export const api = {
       queued: number;
       message: string;
       vlm_enabled?: boolean;
+      already_running?: boolean;
     }>(
       `/api/inference/run${qs({ limit, force_heuristic })}`,
       { method: "POST" },
     ),
+  /** Re-queue all heuristic / failed-VLM library items for real inference. */
+  requeueHeuristic: (limit = 500) =>
+    request<{
+      job_id: string | null;
+      queued: number;
+      message: string;
+      total_queue?: number;
+      remaining_after?: number;
+      already_running?: boolean;
+    }>(`/api/inference/requeue-heuristic${qs({ limit })}`, { method: "POST" }),
   reanalyseMedia: (id: string) =>
     request<{
       media_id: string;

@@ -27,11 +27,154 @@ def _lib_filter():
     return or_(MediaItem.lifecycle == "library", MediaItem.lifecycle.is_(None))
 
 
-def _is_heuristic(model_name: str | None) -> bool:
+def _is_heuristic(
+    model_name: str | None, model_version: str | None = None
+) -> bool:
     if not model_name:
         return True
     m = model_name.lower()
-    return "heuristic" in m or m in ("quality-gate", "none", "")
+    v = (model_version or "").lower()
+    return (
+        "heuristic" in m
+        or m in ("quality-gate", "none", "")
+        or "vlm-failed" in m
+        or "vlm-failed" in v
+        or m.endswith(":failed")
+    )
+
+
+def _heuristic_filter():
+    """SQL filter: analysis that is not real VLM (failed / never ran)."""
+    return or_(
+        MediaAnalysis.model_name.is_(None),
+        MediaAnalysis.model_name == "",
+        MediaAnalysis.model_name.ilike("%heuristic%"),
+        MediaAnalysis.model_name.ilike("%quality-gate%"),
+        MediaAnalysis.model_name.ilike("%vlm-failed%"),
+        MediaAnalysis.model_version.ilike("%vlm-failed%"),
+        MediaAnalysis.model_version.ilike("%failed%"),
+    )
+
+
+def collect_inference_queue_ids(
+    db: Session,
+    *,
+    limit: int = 100,
+    force_heuristic: bool = True,
+) -> list[str]:
+    """All library items that still need real VLM (pending or failed→heuristic)."""
+    limit = max(1, min(int(limit), 5000))
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    # 1) Never analysed
+    pending = (
+        db.query(MediaItem.id)
+        .outerjoin(MediaAnalysis, MediaAnalysis.media_id == MediaItem.id)
+        .filter(_lib_filter(), MediaAnalysis.media_id.is_(None))
+        .order_by(MediaItem.created_at.asc())
+        .limit(limit)
+        .all()
+    )
+    for (mid,) in pending:
+        if mid not in seen:
+            seen.add(mid)
+            ids.append(mid)
+
+    if force_heuristic and len(ids) < limit:
+        need = limit - len(ids)
+        heuristic = (
+            db.query(MediaItem.id)
+            .join(MediaAnalysis, MediaAnalysis.media_id == MediaItem.id)
+            .filter(_lib_filter(), _heuristic_filter())
+            .order_by(MediaItem.created_at.asc())
+            .limit(need)
+            .all()
+        )
+        for (mid,) in heuristic:
+            if mid not in seen:
+                seen.add(mid)
+                ids.append(mid)
+
+    return ids[:limit]
+
+
+def count_inference_queue(db: Session, *, force_heuristic: bool = True) -> dict[str, int]:
+    pending = (
+        db.query(func.count(MediaItem.id))
+        .outerjoin(MediaAnalysis, MediaAnalysis.media_id == MediaItem.id)
+        .filter(_lib_filter(), MediaAnalysis.media_id.is_(None))
+        .scalar()
+        or 0
+    )
+    heuristic = 0
+    if force_heuristic:
+        heuristic = (
+            db.query(func.count(MediaItem.id))
+            .join(MediaAnalysis, MediaAnalysis.media_id == MediaItem.id)
+            .filter(_lib_filter(), _heuristic_filter())
+            .scalar()
+            or 0
+        )
+    return {
+        "pending": int(pending),
+        "heuristic": int(heuristic),
+        "queue": int(pending) + int(heuristic),
+    }
+
+
+def start_inference_job(
+    media_ids: list[str],
+    *,
+    force_heuristic: bool = True,
+    reason: str = "manual",
+) -> dict:
+    """Create + start an inference job for the given media ids."""
+    if not media_ids:
+        return {"job_id": None, "queued": 0, "message": "Nothing pending for inference"}
+
+    settings = get_settings()
+    with session_scope() as session:
+        job = Job(
+            job_type="inference",
+            status="queued",
+            message=f"Inference queue: {len(media_ids)} items ({reason})",
+            total=len(media_ids),
+            completed=0,
+            progress=0.0,
+            payload=json.dumps(
+                {
+                    "media_ids": media_ids,
+                    "force_heuristic": force_heuristic,
+                    "reason": reason,
+                }
+            ),
+        )
+        session.add(job)
+        session.flush()
+        job_id = job.id
+
+    register_job(job_id)
+    t = threading.Thread(
+        target=_run_inference_job,
+        args=(job_id, media_ids),
+        name=f"neuraldisc-infer-{job_id[:8]}",
+        daemon=True,
+    )
+    t.start()
+    log.info(
+        "inference_job_started",
+        job_id=job_id,
+        n=len(media_ids),
+        reason=reason,
+    )
+    return {
+        "job_id": job_id,
+        "queued": len(media_ids),
+        "message": f"Started inference on {len(media_ids)} items",
+        "vlm_enabled": settings.vlm_enabled,
+        "reason": reason,
+    }
 
 
 @router.get("/status")
@@ -46,19 +189,11 @@ def inference_status(db: Session = Depends(get_db)) -> dict:
         .scalar()
         or 0
     )
-    heuristic = (
-        db.query(func.count(MediaAnalysis.media_id))
-        .join(MediaItem, MediaItem.id == MediaAnalysis.media_id)
-        .filter(
-            _lib_filter(),
-            or_(
-                MediaAnalysis.model_name.is_(None),
-                MediaAnalysis.model_name.ilike("%heuristic%"),
-            ),
-        )
-        .scalar()
-        or 0
+    counts = count_inference_queue(
+        db, force_heuristic=bool(settings.vlm_enabled)
     )
+    heuristic = counts["heuristic"]
+    pending = counts["pending"]
     vlm_done = (
         db.query(func.count(MediaAnalysis.media_id))
         .join(MediaItem, MediaItem.id == MediaAnalysis.media_id)
@@ -66,13 +201,14 @@ def inference_status(db: Session = Depends(get_db)) -> dict:
             _lib_filter(),
             MediaAnalysis.model_name.isnot(None),
             ~MediaAnalysis.model_name.ilike("%heuristic%"),
+            ~MediaAnalysis.model_name.ilike("%quality-gate%"),
+            ~MediaAnalysis.model_name.ilike("%vlm-failed%"),
         )
         .scalar()
         or 0
     )
-    pending = total - with_analysis
-    # Queue = no analysis, or heuristic while VLM is enabled
-    queue_n = pending + (heuristic if settings.vlm_enabled else 0)
+    # Queue = no analysis, or heuristic / failed VLM while VLM is enabled
+    queue_n = counts["queue"] if settings.vlm_enabled else pending
 
     active_job = (
         db.query(Job)
@@ -140,7 +276,7 @@ def inference_queue(
     def eligible(m: MediaItem) -> bool:
         if m.analysis is None:
             return mode in ("pending", "all")
-        if _is_heuristic(m.analysis.model_name):
+        if _is_heuristic(m.analysis.model_name, m.analysis.model_version):
             return mode in ("heuristic", "all") or (
                 mode == "pending" and settings.vlm_enabled
             )
@@ -162,7 +298,9 @@ def inference_queue(
                     if m.analysis is None
                     else (
                         "heuristic"
-                        if _is_heuristic(m.analysis.model_name)
+                        if _is_heuristic(
+                            m.analysis.model_name, m.analysis.model_version
+                        )
                         else "vlm"
                     )
                 ),
@@ -213,69 +351,91 @@ def reanalyse_one(
 def run_inference_batch(
     limit: int = Query(100, ge=1, le=2000),
     force_heuristic: bool = Query(
-        False,
-        description="Also re-run items that only have heuristic analysis",
+        True,
+        description="Re-run heuristic / failed-VLM items (default true)",
     ),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Start a background job to analyse pending (and optionally heuristic) items."""
+    """Start a background job to analyse pending and failed/heuristic items."""
     settings = get_settings()
-
-    # Collect ids
-    q = (
-        db.query(MediaItem)
-        .options(joinedload(MediaItem.analysis))
-        .filter(_lib_filter())
-        .order_by(MediaItem.created_at.asc())
+    # Avoid stacking concurrent inference workers
+    active = (
+        db.query(Job)
+        .filter(Job.job_type == "inference", Job.status.in_(("queued", "running")))
+        .first()
     )
-    ids: list[str] = []
-    for m in q.limit(limit * 3).all():
-        if m.analysis is None:
-            ids.append(m.id)
-        elif force_heuristic and _is_heuristic(m.analysis.model_name):
-            ids.append(m.id)
-        if len(ids) >= limit:
-            break
+    if active:
+        return {
+            "job_id": active.id,
+            "queued": 0,
+            "message": f"Inference already {active.status}: {active.message or active.id[:8]}",
+            "vlm_enabled": settings.vlm_enabled,
+            "already_running": True,
+        }
 
-    if not ids:
-        return {"job_id": None, "queued": 0, "message": "Nothing pending for inference"}
-
-    job = Job(
-        job_type="inference",
-        status="queued",
-        message=f"Inference queue: {len(ids)} items",
-        total=len(ids),
-        completed=0,
-        progress=0.0,
-        payload=json.dumps({"media_ids": ids, "force_heuristic": force_heuristic}),
+    ids = collect_inference_queue_ids(
+        db, limit=limit, force_heuristic=force_heuristic
     )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-    job_id = job.id
-
-    register_job(job_id)
-
-    t = threading.Thread(
-        target=_run_inference_job,
-        args=(job_id, ids),
-        name=f"neuraldisc-infer-{job_id[:8]}",
-        daemon=True,
+    return start_inference_job(
+        ids, force_heuristic=force_heuristic, reason="manual"
     )
-    t.start()
-    log.info("inference_job_started", job_id=job_id, n=len(ids))
-    return {
-        "job_id": job_id,
-        "queued": len(ids),
-        "message": f"Started inference on {len(ids)} items",
-        "vlm_enabled": settings.vlm_enabled,
-    }
+
+
+@router.post("/requeue-heuristic")
+def requeue_all_heuristic(
+    limit: int = Query(
+        500,
+        ge=1,
+        le=5000,
+        description="Max items in this batch (remaining stay queued for next auto pass)",
+    ),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Re-queue every library item still on heuristic / failed VLM for real inference."""
+    settings = get_settings()
+    if not settings.vlm_enabled:
+        raise HTTPException(
+            400,
+            "VLM is disabled — enable VLM in Settings before re-queuing heuristics",
+        )
+    active = (
+        db.query(Job)
+        .filter(Job.job_type == "inference", Job.status.in_(("queued", "running")))
+        .first()
+    )
+    if active:
+        counts = count_inference_queue(db, force_heuristic=True)
+        return {
+            "job_id": active.id,
+            "queued": 0,
+            "remaining": counts["queue"],
+            "message": f"Inference already running — {counts['queue']} still need VLM",
+            "already_running": True,
+        }
+
+    counts = count_inference_queue(db, force_heuristic=True)
+    ids = collect_inference_queue_ids(db, limit=limit, force_heuristic=True)
+    res = start_inference_job(
+        ids, force_heuristic=True, reason="requeue-heuristic"
+    )
+    res["remaining_after"] = max(0, counts["queue"] - len(ids))
+    res["total_queue"] = counts["queue"]
+    res["message"] = (
+        f"Re-queued {len(ids)} of {counts['queue']} heuristic/failed items"
+        + (
+            f" · {res['remaining_after']} left for next batch"
+            if res.get("remaining_after")
+            else ""
+        )
+    )
+    return res
 
 
 def _run_inference_job(job_id: str, media_ids: list[str]) -> None:
     settings = get_settings()
     done = 0
     errors = 0
+    chain_next = False
     try:
         with session_scope() as session:
             job = session.get(Job, job_id)
@@ -340,6 +500,7 @@ def _run_inference_job(job_id: str, media_ids: list[str]) -> None:
                     + (f", {errors} errors" if errors else "")
                     + " · MLX released"
                 )
+        chain_next = True
     except Exception as exc:  # noqa: BLE001
         log.exception("inference_job_failed", job_id=job_id)
         with session_scope() as session:
@@ -349,6 +510,7 @@ def _run_inference_job(job_id: str, media_ids: list[str]) -> None:
                 job.error = str(exc)
                 job.finished_at = datetime.now(timezone.utc)
                 job.message = f"Failed: {exc}"
+        chain_next = True
     finally:
         # Always free GPU/unified memory for peer apps (mlx_lm :8088, etc.)
         try:
@@ -357,3 +519,41 @@ def _run_inference_job(job_id: str, media_ids: list[str]) -> None:
         except Exception as rel_exc:  # noqa: BLE001
             log.warning("inference_job_release_failed", error=str(rel_exc))
         clear_cancel(job_id)
+        # After release, continue draining heuristic/failed queue
+        if chain_next:
+            try:
+                _chain_remaining_inference()
+            except Exception as chain_exc:  # noqa: BLE001
+                log.warning("inference_chain_failed", error=str(chain_exc))
+
+
+def _chain_remaining_inference() -> None:
+    """If VLM is on and heuristics remain, start the next batch immediately."""
+    settings = get_settings()
+    if not settings.vlm_enabled:
+        return
+    if not settings.auto_resume_inference:
+        return
+    with session_scope() as session:
+        active = (
+            session.query(Job.id)
+            .filter(
+                Job.job_type == "inference",
+                Job.status.in_(("queued", "running")),
+            )
+            .first()
+        )
+        if active:
+            return
+        remaining = count_inference_queue(session, force_heuristic=True)["queue"]
+        if remaining <= 0:
+            log.info("inference_queue_drained")
+            return
+        batch = min(settings.auto_resume_inference_limit, 100)
+        ids = collect_inference_queue_ids(
+            session, limit=batch, force_heuristic=True
+        )
+    if not ids:
+        return
+    log.info("inference_chain_next", remaining=remaining, batch=len(ids))
+    start_inference_job(ids, force_heuristic=True, reason="chain")

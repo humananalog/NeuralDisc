@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Smart collections & auto albums** from EXIF + VLM (years, cameras, scenes, events, discs)
 - Job **stale recovery** on API restart + live-worker registry (import + inference) + Jobs UI Clear stale / Reap orphans
 - **Auto-resume supervisor**: keep staging drain, resume interrupted imports, re-queue post-ingest, auto-start inference when VLM on + queue non-empty
+- **Heuristic re-queue**: SQL-backed queue of all failed-VLM/heuristic items; chain batches until drained; `POST /api/inference/requeue-heuristic`
 - Collapsible **import modal** (minimize to dock) + live panel process status
 - Immediate **thumbnail refresh** after rotate (versioned URLs + no-cache derivatives)
 - App version badge in sidebar + Settings (UI `0.3.0` aligned with backend)
