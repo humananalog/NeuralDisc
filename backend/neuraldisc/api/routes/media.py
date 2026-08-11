@@ -494,7 +494,20 @@ def get_original(media_id: str, db: Session = Depends(get_db)) -> FileResponse:
     path = Path(media.library_path)
     if not path.exists():
         raise HTTPException(404, "Original file missing")
-    return FileResponse(path, filename=media.filename)
+    return FileResponse(
+        path,
+        filename=media.filename,
+        headers={
+            "Cache-Control": "private, max-age=0, must-revalidate",
+        },
+    )
+
+
+# Derivatives change on rotate — never let browsers hold a stale thumb/preview.
+_DERIVATIVE_CACHE = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+}
 
 
 def _file_response(media_id: str, kind: str, db: Session) -> FileResponse:
@@ -510,6 +523,10 @@ def _file_response(media_id: str, kind: str, db: Session) -> FileResponse:
         # Fall back to original for images
         orig = Path(media.library_path)
         if orig.exists() and media.media_type == "image":
-            return FileResponse(orig, media_type=media.mime_type or "image/jpeg")
+            return FileResponse(
+                orig,
+                media_type=media.mime_type or "image/jpeg",
+                headers=dict(_DERIVATIVE_CACHE),
+            )
         raise HTTPException(404, f"{kind} not found")
-    return FileResponse(path, media_type="image/jpeg")
+    return FileResponse(path, media_type="image/jpeg", headers=dict(_DERIVATIVE_CACHE))

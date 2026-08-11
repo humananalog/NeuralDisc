@@ -10,8 +10,8 @@ All responses are JSON unless serving media files. Frontend proxies `/api/*` via
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Status, version, library root, DB + exiftool |
-| GET | `/api/stats` | Library totals (media, HITL, duplicates, GPS, storage, …) |
-| GET | `/api/stats/nav` | Sidebar counters for every nav section |
+| GET | `/api/stats` | Library totals (media, duplicates, GPS, storage, …) |
+| GET | `/api/stats/nav` | Sidebar counters (`review` always 0 — HITL removed) |
 
 ## Media
 
@@ -19,7 +19,7 @@ All responses are JSON unless serving media files. Frontend proxies `/api/*` via
 |--------|------|-------------|
 | GET | `/api/media` | List library items. Query: `q`, `media_type`, `hitl_status`, `is_duplicate`, `is_blurry`, `trash`, `sort`, `limit`, `offset` |
 | GET | `/api/media/{id}` | Full detail + analysis |
-| PATCH | `/api/media/{id}` | Rating, flag, HITL, caption edits |
+| PATCH | `/api/media/{id}` | Rating, flag, caption edits |
 | DELETE | `/api/media/{id}?permanent=` | Soft-delete (default) or permanent |
 | POST | `/api/media/batch-delete` | Body: `{ ids, permanent }` |
 | POST | `/api/media/{id}/restore` | Restore from trash |
@@ -32,14 +32,28 @@ All responses are JSON unless serving media files. Frontend proxies `/api/*` via
 
 **Default list filter:** `lifecycle` is `library` (excludes staging, rejected, trash). Use `trash=true` for trash.
 
-## Import
+## Import (copy-first)
+
+Default: **serial copy** to `library/staging`, then **background process**. Import job completes when copy finishes (`disc_ready`).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/import` | Start job. Modes: `disc`, `media`, `folder`, `batch` |
-| GET | `/api/import/{job_id}` | Live import status |
-| GET | `/api/import/live` | All in-memory live imports |
+| POST | `/api/import` | Start/enqueue copy job. Modes: `disc`, `media`, `folder`, `batch` |
+| GET | `/api/import/{job_id}` | Status (`phase`, `copied`, `disc_ready`, `copy_only`, …) |
+| GET | `/api/import/live` | In-memory live copy jobs |
 | GET | `/api/import/suggestions/volumes` | Mounted volumes + media counts |
+| GET | `/api/import/process/status` | Background staging processor (pending, promoted session) |
+| POST | `/api/import/process/wake` | Nudge processor |
+
+## Inference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/inference/status` | Coverage, queue size, VLM loaded, Metal memory, active job |
+| GET | `/api/inference/queue` | `mode=pending\|heuristic\|all` |
+| POST | `/api/inference/run` | Batch re-analyse (`limit`, `force_heuristic`) |
+| POST | `/api/inference/{media_id}/reanalyse` | One item (`keep_loaded` default false → release MLX) |
+| POST | `/api/inference/release` | Unload VLM + clear Metal cache |
 
 ## Duplicates
 
@@ -54,15 +68,20 @@ All responses are JSON unless serving media files. Frontend proxies `/api/*` via
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/jobs` | Recent jobs |
+| GET | `/api/jobs` | Recent jobs (+ `stale`, `has_live_worker`) |
 | GET | `/api/jobs/{id}` | One job |
-| POST | `/api/jobs/{id}/cancel` | Cooperative cancel (import / post-ingest) |
+| GET | `/api/jobs/live` | In-process worker ids |
+| POST | `/api/jobs/{id}/cancel` | Cooperative cancel; closes orphan jobs immediately |
+| POST | `/api/jobs/{id}/resume` | Resume interrupted import |
+| POST | `/api/jobs/reap-stale` | Close active jobs with no live worker |
 
-## HITL
+## HITL (legacy)
+
+Review UI removed. AI accepts on promote. Endpoints remain for compatibility but queue is empty after startup auto-accept.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/hitl/queue` | Pending review items |
+| GET | `/api/hitl/queue` | Legacy pending items (usually empty) |
 | GET | `/api/hitl/count` | Pending count |
 | POST | `/api/hitl/{id}/resolve` | Accept / reject / edit / defer |
 | POST | `/api/hitl/batch/accept` | Accept many media IDs |
@@ -84,8 +103,13 @@ All responses are JSON unless serving media files. Frontend proxies `/api/*` via
 |--------|------|-------------|
 | GET | `/api/discs` | Ingested discs |
 | POST | `/api/discs/ingest` | Sync ingest path (legacy/simple) |
-| GET | `/api/albums` | Albums |
-| POST | `/api/albums` | Create album |
+| GET | `/api/albums` | Albums + smart collections (`?kind=album\|smart`) |
+| POST | `/api/albums` | Create fixed album |
+| POST | `/api/albums/smart` | Create smart collection (auto-name from rules if name omitted) |
+| POST | `/api/albums/auto-organise` | Build auto-named albums from EXIF + inference + smart defaults |
+| GET | `/api/albums/{id}` | Album detail |
+| GET | `/api/albums/{id}/media` | Members (dynamic for smart) |
+| DELETE | `/api/albums/{id}` | Delete collection (not media) |
 
 ## WebSocket
 

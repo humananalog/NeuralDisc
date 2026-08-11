@@ -166,12 +166,8 @@ def get_nav_counts(db: Session = Depends(get_db)) -> NavCountsOut:
         or 0
     )
     albums = db.query(func.count(Album.id)).scalar() or 0
-    review = (
-        db.query(func.count(MediaItem.id))
-        .filter(lib, MediaItem.hitl_status == "pending")
-        .scalar()
-        or 0
-    )
+    # HITL review removed — always 0 (kept in schema for nav client compat)
+    review = 0
     jobs = (
         db.query(func.count(Job.id))
         .filter(Job.status.in_(("queued", "running")))
@@ -198,6 +194,31 @@ def get_nav_counts(db: Session = Depends(get_db)) -> NavCountsOut:
     except Exception:  # noqa: BLE001
         settings_n = 0
 
+    # Inference queue size (pending analysis; + heuristics if VLM on)
+    from neuraldisc.config import get_settings as _gs
+
+    _cfg = _gs()
+    pending_inf = max(0, library - (
+        db.query(func.count(MediaAnalysis.media_id))
+        .join(MediaItem, MediaItem.id == MediaAnalysis.media_id)
+        .filter(_library_filter())
+        .scalar()
+        or 0
+    ))
+    heuristic = 0
+    if _cfg.vlm_enabled:
+        heuristic = (
+            db.query(func.count(MediaAnalysis.media_id))
+            .join(MediaItem, MediaItem.id == MediaAnalysis.media_id)
+            .filter(
+                _library_filter(),
+                MediaAnalysis.model_name.ilike("%heuristic%"),
+            )
+            .scalar()
+            or 0
+        )
+    inference_n = pending_inf + heuristic
+
     return NavCountsOut(
         library=library,
         timeline=timeline,
@@ -214,4 +235,5 @@ def get_nav_counts(db: Session = Depends(get_db)) -> NavCountsOut:
         videos=videos,
         discs=discs,
         trash=trash,
+        inference=inference_n,
     )

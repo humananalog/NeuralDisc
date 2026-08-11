@@ -15,6 +15,9 @@ import {
   Loader2,
   RefreshCw,
   Check,
+  Minus,
+  Maximize2,
+  HardDriveDownload,
 } from "lucide-react";
 
 type Mode = "disc" | "media" | "batch";
@@ -42,7 +45,10 @@ type MountedVolume = {
 
 export function ImportModal() {
   const open = useAppStore((s) => s.importOpen);
-  const setOpen = useAppStore((s) => s.setImportOpen);
+  const minimized = useAppStore((s) => s.importMinimized);
+  const expandImport = useAppStore((s) => s.expandImport);
+  const minimizeImport = useAppStore((s) => s.minimizeImport);
+  const closeImport = useAppStore((s) => s.closeImport);
   const trackImport = useAppStore((s) => s.trackImport);
   const router = useRouter();
 
@@ -58,6 +64,45 @@ export function ImportModal() {
   const [starting, setStarting] = useState(false);
   const [newPaths, setNewPaths] = useState<Set<string>>(new Set());
   const knownPathsRef = useRef<Set<string>>(new Set());
+  /** When true, next open restores session instead of wiping selection */
+  const preserveSessionRef = useRef(false);
+  /** Track minimize so TopBar “Import · expand” also restores form */
+  const wasMinimizedRef = useRef(false);
+
+  const sessionActive = open || minimized;
+
+  function resetForm() {
+    setMode("disc");
+    setPath("");
+    setVolumeName("");
+    setBatchText("");
+    setSelectedPaths(new Set());
+    setError(null);
+    setNewPaths(new Set());
+    setStarting(false);
+  }
+
+  function handleClose() {
+    preserveSessionRef.current = false;
+    wasMinimizedRef.current = false;
+    closeImport();
+    resetForm();
+  }
+
+  function handleMinimize() {
+    preserveSessionRef.current = true;
+    wasMinimizedRef.current = true;
+    minimizeImport();
+  }
+
+  function handleExpand() {
+    preserveSessionRef.current = true;
+    expandImport();
+  }
+
+  useEffect(() => {
+    if (minimized) wasMinimizedRef.current = true;
+  }, [minimized]);
 
   /** Full scan with media counts — open / manual Rescan only */
   const refreshVolumes = useCallback(async (opts?: { quiet?: boolean }) => {
@@ -126,24 +171,47 @@ export function ImportModal() {
     }
   }, []);
 
-  // On open: one full scan. Background: quiet light poll every 12s (no loop of full scans).
+  // While dialog is open or minimized: scan mounts so discs still appear when expanded.
   useEffect(() => {
-    if (!open) return;
-    knownPathsRef.current = new Set();
-    void refreshVolumes({ quiet: false });
+    if (!sessionActive) return;
+    const restore = preserveSessionRef.current || wasMinimizedRef.current;
+    // Full rescan when opening a fresh session; quiet poll after restore/minimize
+    if (open && !restore) {
+      knownPathsRef.current = new Set();
+      void refreshVolumes({ quiet: false });
+    } else if (sessionActive) {
+      void refreshVolumes({ quiet: true });
+    }
     const id = setInterval(() => {
       void pollMounts();
     }, 12_000);
     return () => clearInterval(id);
-  }, [open, refreshVolumes, pollMounts]);
+  }, [sessionActive, open, refreshVolumes, pollMounts]);
 
-  // Reset selection when reopening
+  // Cold open only: clear selection (not when restoring from minimize)
   useEffect(() => {
-    if (open) {
-      setSelectedPaths(new Set());
-      setError(null);
-      setNewPaths(new Set());
+    if (!open) return;
+    if (preserveSessionRef.current || wasMinimizedRef.current) {
+      preserveSessionRef.current = false;
+      wasMinimizedRef.current = false;
+      return;
     }
+    setSelectedPaths(new Set());
+    setError(null);
+    setNewPaths(new Set());
+  }, [open]);
+
+  // Escape: minimize when open (free UI), don't hard-close
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleMinimize();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
   const selectedVolumes = useMemo(
@@ -239,7 +307,8 @@ export function ImportModal() {
       const res = await api.startImport(body);
       // Track live panel + free the UI immediately
       trackImport(res.job_id, label);
-      setOpen(false);
+      closeImport();
+      resetForm();
       router.push("/library");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Import failed to start");
@@ -248,19 +317,79 @@ export function ImportModal() {
     }
   }
 
-  if (!open) return null;
-
   const running = starting;
   const optical = volumes.filter((v) => v.kind === "optical" || v.is_optical);
   const other = volumes.filter((v) => !(v.kind === "optical" || v.is_optical));
 
+  const selectionHint =
+    selectedPaths.size > 0
+      ? `${selectedPaths.size} selected`
+      : path.trim()
+        ? path.split("/").pop() || "path set"
+        : volumes.length
+          ? `${volumes.length} volume${volumes.length === 1 ? "" : "s"}`
+          : "waiting for media";
+
+  // Minimized dock — library UI free; click to restore full dialog
+  if (minimized && !open) {
+    return (
+      <div className="pointer-events-none fixed bottom-4 left-4 z-40">
+        <div className="pointer-events-auto flex max-w-[min(100vw-2rem,320px)] items-center gap-1 rounded-xl border border-[var(--accent)]/40 bg-[var(--bg-elevated)]/95 py-1.5 pl-1.5 pr-1 shadow-2xl backdrop-blur-md">
+          <button
+            type="button"
+            onClick={handleExpand}
+            className="group flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition hover:bg-[var(--bg-selected)]"
+            title="Expand import dialog"
+          >
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)]/15 text-[var(--accent)]">
+              {scanning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <HardDriveDownload className="h-4 w-4" />
+              )}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[12px] font-medium text-[var(--text-primary)]">
+                Import ready
+              </span>
+              <span className="block truncate text-[10px] text-[var(--text-muted)]">
+                {selectionHint}
+                {newPaths.size > 0 ? ` · ${newPaths.size} new` : ""}
+                {" · expand"}
+              </span>
+            </span>
+            <Maximize2 className="h-3.5 w-3.5 shrink-0 text-[var(--accent)] opacity-80 group-hover:opacity-100" />
+          </button>
+          <button
+            type="button"
+            onClick={handleClose}
+            className="mr-0.5 rounded p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+            aria-label="Dismiss import session"
+            title="Dismiss"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!open) return null;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={(e) => {
+        // Backdrop click minimizes (keeps selection) instead of hard-close
+        if (e.target === e.currentTarget) handleMinimize();
+      }}
+    >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="import-title"
         className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <div>
@@ -269,16 +398,29 @@ export function ImportModal() {
             </h2>
             <p className="text-[11px] text-[var(--text-muted)]">
               Auto-detects mounted discs — click a disc to select the full volume.
+              Minimize to keep browsing the library.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            className="rounded p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={handleMinimize}
+              className="rounded p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+              aria-label="Minimize import — free the UI"
+              title="Minimize (Esc) — free UI, keep selection"
+            >
+              <Minus className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="rounded p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+              aria-label="Close"
+              title="Close and discard"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
@@ -435,15 +577,27 @@ export function ImportModal() {
           )}
 
           <div className="rounded-md border border-[var(--accent)]/25 bg-[var(--accent)]/5 px-3 py-2 text-[11px] text-[var(--text-secondary)]">
-            After you start, this dialog closes. A <strong className="text-[var(--text-primary)]">live status panel</strong> stays
-            on screen and the library streams in newly classified images as they finish.
+            <strong className="text-[var(--text-primary)]">Copy-first pipeline:</strong> files land
+            in staging on your library SSD. When copy finishes,{" "}
+            <strong className="text-[var(--text-primary)]">eject and insert the next disc</strong>
+            — classification (EXIF / VLM / promote) runs in the background and never blocks the
+            next copy. Discs are processed in series. Minimize (Esc) frees the UI.
           </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] px-4 py-3">
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={handleMinimize}
+            className="mr-auto inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] px-3 py-2 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+            title="Collapse to dock — keep browsing"
+          >
+            <Minus className="h-3.5 w-3.5" />
+            Minimize
+          </button>
+          <button
+            type="button"
+            onClick={handleClose}
             className="rounded-md px-3 py-2 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
           >
             Cancel

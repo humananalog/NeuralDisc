@@ -148,27 +148,7 @@ def _attach_group(
         m.best_of_group = m.id == best.id
     existing_group.best_media_id = best.id
     existing_group.method = method
-
-    # HITL entry for duplicate review
-    q = (
-        session.query(HitlQueueItem)
-        .filter(
-            HitlQueueItem.media_id == media.id,
-            HitlQueueItem.resolved_at.is_(None),
-        )
-        .first()
-    )
-    if q:
-        q.queue_type = "duplicate"
-        q.priority = min(q.priority, 20)
-    else:
-        session.add(
-            HitlQueueItem(
-                media_id=media.id,
-                queue_type="duplicate",
-                priority=20,
-            )
-        )
+    # No HITL queue — resolve dups in Duplicates UI; AI keep-best is source of truth until then
 
     session.flush()
     log.info(
@@ -294,9 +274,15 @@ def keep_best_among(
 
     if group is not None:
         group.best_media_id = best.id
-        # Remaining non-trashed members outside this set keep group membership;
-        # if we resolved the whole group, clear is_duplicate on best only (done).
         result.groups_resolved = 1
+        # Drop trashed/rejected losers from the group so the UI no longer lists them
+        if loser_ids:
+            session.query(DuplicateMember).filter(
+                DuplicateMember.group_id == group.id,
+                DuplicateMember.media_id.in_(loser_ids),
+            ).delete(synchronize_session=False)
+        # If fewer than 2 library members remain, dissolve the group entirely
+        _prune_group_if_resolved(session, group.id)
 
     # Resolve open HITL for everyone in the set
     all_ids = [m.id for m in active]
@@ -475,7 +461,80 @@ def keep_best_batch(
     return merged
 
 
-def list_duplicate_groups(session: Session) -> list[dict]:
+def _is_active_lifecycle(lifecycle: str | None) -> bool:
+    return (lifecycle or "library") not in ("trash", "rejected")
+
+
+def _prune_group_if_resolved(session: Session, group_id: str) -> bool:
+    """Remove group when fewer than 2 non-trash members remain. Returns True if deleted."""
+    members = (
+        session.query(MediaItem)
+        .join(DuplicateMember, DuplicateMember.media_id == MediaItem.id)
+        .filter(DuplicateMember.group_id == group_id)
+        .all()
+    )
+    alive = [m for m in members if _is_active_lifecycle(m.lifecycle)]
+    if len(alive) >= 2:
+        return False
+    # Clear duplicate flag on remaining survivors
+    for m in alive:
+        m.is_duplicate = False
+        m.best_of_group = False
+    session.query(DuplicateMember).filter(DuplicateMember.group_id == group_id).delete(
+        synchronize_session=False
+    )
+    g = session.get(DuplicateGroup, group_id)
+    if g:
+        session.delete(g)
+    session.flush()
+    log.info("duplicate_group_pruned", group_id=group_id, remaining=len(alive))
+    return True
+
+
+def prune_resolved_duplicate_groups(session: Session) -> dict:
+    """Dissolve groups that no longer have ≥2 library members (e.g. after trash)."""
+    groups = session.query(DuplicateGroup).all()
+    pruned = 0
+    for g in groups:
+        if _prune_group_if_resolved(session, g.id):
+            pruned += 1
+    # Also strip trashed members from still-active groups so UI doesn't show ghosts
+    trashed_members = (
+        session.query(DuplicateMember)
+        .join(MediaItem, MediaItem.id == DuplicateMember.media_id)
+        .filter(MediaItem.lifecycle.in_(("trash", "rejected")))
+        .all()
+    )
+    stripped = 0
+    for mem in trashed_members:
+        session.delete(mem)
+        stripped += 1
+    session.flush()
+    # Re-prune after stripping
+    for g in session.query(DuplicateGroup).all():
+        if _prune_group_if_resolved(session, g.id):
+            pruned += 1
+    log.info("duplicate_groups_cleanup", pruned=pruned, stripped=stripped)
+    return {"pruned": pruned, "stripped": stripped}
+
+
+def list_duplicate_groups(
+    session: Session,
+    *,
+    include_resolved: bool = False,
+    prune: bool = True,
+) -> list[dict]:
+    """List duplicate groups.
+
+    By default only **active** groups (≥2 non-trash members) are returned and
+    resolved/ghost groups are pruned so counts match the UI.
+    """
+    if prune:
+        try:
+            prune_resolved_duplicate_groups(session)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("prune_on_list_failed", error=str(exc))
+
     groups = session.query(DuplicateGroup).order_by(DuplicateGroup.created_at.desc()).all()
     out = []
     for g in groups:
@@ -485,13 +544,23 @@ def list_duplicate_groups(session: Session) -> list[dict]:
             .filter(DuplicateMember.group_id == g.id)
             .all()
         )
-        # Hide fully trashed members from UI list? Show all for transparency.
+        # Default: only library members in the payload
+        visible = [
+            (m, sim)
+            for m, sim in members
+            if include_resolved or _is_active_lifecycle(m.lifecycle)
+        ]
+        alive_n = sum(1 for m, _ in members if _is_active_lifecycle(m.lifecycle))
+        is_active = alive_n >= 2
+        if not include_resolved and not is_active:
+            continue
         out.append(
             {
                 "id": g.id,
                 "method": g.method,
                 "best_media_id": g.best_media_id,
                 "created_at": g.created_at.isoformat() if g.created_at else None,
+                "active": is_active,
                 "members": [
                     {
                         "media_id": m.id,
@@ -507,7 +576,7 @@ def list_duplicate_groups(session: Session) -> list[dict]:
                         "library_path": m.library_path,
                         "thumb_url": f"/api/media/{m.id}/thumb",
                     }
-                    for m, sim in members
+                    for m, sim in visible
                 ],
             }
         )
@@ -516,7 +585,12 @@ def list_duplicate_groups(session: Session) -> list[dict]:
 
 def duplicate_summary(session: Session) -> dict:
     """Top-line counts for the Duplicates page header / sidebar badge."""
-    groups = list_duplicate_groups(session)
+    # Prune ghosts first so counts match what the list returns
+    try:
+        prune_resolved_duplicate_groups(session)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("prune_on_summary_failed", error=str(exc))
+    groups = list_duplicate_groups(session, include_resolved=True, prune=False)
     active_groups = 0
     resolved_groups = 0
     total_members = 0

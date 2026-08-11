@@ -83,7 +83,7 @@ class MediaItem(Base):
     is_blurry: Mapped[bool] = mapped_column(Boolean, default=False)
     is_duplicate: Mapped[bool] = mapped_column(Boolean, default=False)
     best_of_group: Mapped[bool] = mapped_column(Boolean, default=False)
-    hitl_status: Mapped[str] = mapped_column(String(32), default="pending")
+    hitl_status: Mapped[str] = mapped_column(String(32), default="accepted")
     # staging = in temp until classified; library = promoted; rejected = purged;
     # trash = soft-deleted (catalogue best practice — restorable until permanent purge)
     lifecycle: Mapped[str] = mapped_column(String(32), default="library")
@@ -185,13 +185,33 @@ class HitlQueueItem(Base):
 
 
 class Album(Base):
+    """User album, AI-proposed album, or smart collection (dynamic rules).
+
+    kind:
+      - album  — fixed membership via album_items (user or auto-materialized)
+      - smart  — membership resolved from rules_json at query time
+    auto_key:
+      - stable id for auto-generated entries, e.g. year:2007, camera:panasonic-dmc-fx7
+    """
+
     __tablename__ = "albums"
+    __table_args__ = (Index("ix_albums_auto_key", "auto_key"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(512), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_ai_proposed: Mapped[bool] = mapped_column(Boolean, default=False)
+    kind: Mapped[str] = mapped_column(String(32), default="album")  # album | smart
+    auto_key: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    rules_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # smart filters
+    source: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )  # user | auto_year | auto_camera | auto_scene | auto_event | auto_disc | smart_*
+    cover_media_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
     items: Mapped[list[AlbumItem]] = relationship(back_populates="album")
 

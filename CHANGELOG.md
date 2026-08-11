@@ -5,6 +5,33 @@ All notable changes to NeuralDisc are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-08-11
+
+### Added
+- **Copy-first import pipeline**: serial disc queue, parallel copy to `library/staging`, job completes when copy finishes (fast optical rotation)
+- **Global staging processor**: background EXIF / blur / derivatives / VLM / promote without blocking the next disc copy
+- `GET /api/import/process/status`, `POST /api/import/process/wake`
+- **Job resume** for interrupted/failed imports (drain staging + re-scan, skip existing SHA-256)
+- **Inference** page: coverage, queue filters, batch run, single re-analyse, **Release MLX** (`POST /api/inference/release`)
+- VLM session refcount + force-release after inference/import process batches (peer apps on Metal)
+- **Smart collections & auto albums** from EXIF + VLM (years, cameras, scenes, events, discs)
+- Job **stale recovery** on API restart + live-worker registry (import + inference) + Jobs UI Clear stale / Reap orphans
+- Collapsible **import modal** (minimize to dock) + live panel process status
+- Immediate **thumbnail refresh** after rotate (versioned URLs + no-cache derivatives)
+- App version badge in sidebar + Settings (UI `0.3.0` aligned with backend)
+
+### Changed
+- **Removed HITL Review** as a primary workflow — AI accepts by default; `/review` redirects to Library
+- Promote sets `hitl_status=accepted`; startup auto-accepts legacy pending HITL rows
+- Import defaults: `import_copy_only=true`, `import_copy_serial=true`
+
+### Fixed
+- Duplicates page showing ghost images when active count was 0 (prune resolved groups)
+- React duplicate-key warning on repeated AI tags (`celebration`, etc.)
+- Permanent delete FK failures; delete modal stuck open
+- Inference jobs incorrectly marked STALE (workers not registered)
+- Manual “Clear stale” skipped young orphan jobs
+
 ## [0.2.0] — 2026-08-11
 
 First full application release: local library backend, Next.js UI, high-throughput import, catalogue operations, and HITL foundations.
@@ -69,5 +96,6 @@ First full application release: local library backend, Next.js UI, high-throughp
 
 ---
 
+[0.3.0]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.0
 [0.2.0]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.2.0
 [0.1.0]: https://github.com/humananalog/NeuralDisc/tree/main

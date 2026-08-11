@@ -35,6 +35,12 @@ def generate_still_derivatives(
     thumb_path = settings.thumbs_dir / f"{media_id}.jpg"
     preview_path = settings.previews_dir / f"{media_id}.jpg"
     try:
+        # Drop stale derivatives so rotate always rewrites on disk
+        for p in (thumb_path, preview_path):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
         with Image.open(source) as im:
             im = ensure_jpeg_rgb(im)
             _save_resized(im, thumb_path, settings.thumb_size, quality=82)
@@ -49,7 +55,10 @@ def _save_resized(im: Image.Image, dest: Path, max_edge: int, quality: int) -> N
     dest.parent.mkdir(parents=True, exist_ok=True)
     clone = im.copy()
     clone.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
-    clone.save(dest, "JPEG", quality=quality, optimize=True, progressive=True)
+    # Atomic replace so concurrent readers never see a half-written thumb
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    clone.save(tmp, "JPEG", quality=quality, optimize=True, progressive=True)
+    tmp.replace(dest)
 
 
 def generate_video_derivatives(

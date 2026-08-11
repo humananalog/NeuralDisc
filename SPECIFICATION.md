@@ -16,7 +16,7 @@ NeuralDisc is a fully autonomous, local-first photo & video library system that 
 
 1. Insert a DVD or CD (or click “Import Disc”).
 2. The system detects the media, extracts every image and video, preserves provenance and original metadata, runs local vision-language analysis, generates embeddings, detects duplicates, and proposes organisation.
-3. The user reviews a clean Human-in-the-Loop (HITL) queue, accepts/rejects/edits AI decisions, and only then commits permanent organisation or deletion.
+3. AI decisions stand by default (captions, quality gates, keep-best). The user browses the Library after inference, edits captions when needed, and manages trash/duplicates — no mandatory HITL gate.
 
 **Hard constraints**
 
@@ -75,13 +75,13 @@ NeuralDisc is a fully autonomous, local-first photo & video library system that 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     FastAPI Backend                                 │
 │  REST + WebSocket (progress, job status)                            │
-│  HITL endpoints, search, collections, stats                         │
+│  Inference, search, collections, stats (HITL legacy APIs optional)  │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │               Next.js Frontend (App Router)                         │
-│  Timeline · Grid · Map · People · Albums · Search · HITL Queue      │
+│  Timeline · Grid · Map · People · Albums · Search · Inference       │
 │  Tailwind + shadcn/ui · Keyboard-first · Responsive                 │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -424,7 +424,7 @@ Deliverables:
 - Crash recovery, resume, observability.
 - README, deployment scripts, first real disc end-to-end test.
 
-### Implementation status (v0.2.0 — 2026-08)
+### Implementation status (v0.3.0 — 2026-08)
 
 Phases **0–4 are largely implemented** in this repository; Phase 5 is partial.
 

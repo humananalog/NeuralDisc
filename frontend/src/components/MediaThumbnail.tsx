@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Star, Flag, Copy, Sparkles, Aperture } from "lucide-react";
 import type { MediaItem } from "@/lib/api";
 import { mediaSrc } from "@/lib/api";
@@ -9,28 +10,46 @@ type Props = {
   item: MediaItem;
   selected?: boolean;
   size?: number;
+  /** Extra cache-bust token (e.g. after rotate) */
+  refreshKey?: string | number;
   onClick?: (e: React.MouseEvent) => void;
   onDoubleClick?: () => void;
 };
+
+function assetUrl(item: MediaItem, refreshKey?: string | number): string {
+  const raw = mediaSrc(item.thumb_url || item.preview_url);
+  if (!raw) return "";
+  // thumb_url from API already includes ?v=… after rotate; still append client key
+  const bust = [
+    item.updated_at,
+    item.rotation_degrees,
+    item.sha256?.slice(0, 12),
+    refreshKey,
+  ]
+    .filter((x) => x !== undefined && x !== null && x !== "")
+    .join("-");
+  if (!bust) return raw;
+  // If server already put v=, use r= for client epoch so both apply
+  const sep = raw.includes("?") ? "&" : "?";
+  return `${raw}${sep}r=${encodeURIComponent(bust)}`;
+}
 
 export function MediaThumbnail({
   item,
   selected,
   size = 160,
+  refreshKey,
   onClick,
   onDoubleClick,
 }: Props) {
-  const raw = mediaSrc(item.thumb_url || item.preview_url);
-  // Bust browser cache after rotate/rewrite (same URL path, new pixels)
-  const bust =
-    item.updated_at ||
-    (item.rotation_degrees ? String(item.rotation_degrees) : "") ||
-    (item.auto_rotated ? "1" : "");
-  const src =
-    raw && bust
-      ? `${raw}${raw.includes("?") ? "&" : "?"}v=${encodeURIComponent(bust)}`
-      : raw;
+  const src = assetUrl(item, refreshKey);
   const conf = item.analysis?.confidence;
+  // Force <img> remount when src identity changes (reliable after rotate)
+  const [imgKey, setImgKey] = useState(src);
+
+  useEffect(() => {
+    setImgKey(src);
+  }, [src]);
 
   return (
     <button
@@ -48,10 +67,12 @@ export function MediaThumbnail({
       {src ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
+          key={imgKey}
           src={src}
           alt={item.filename}
           className="h-full w-full object-cover"
-          loading="lazy"
+          loading="eager"
+          decoding="async"
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center text-[11px] text-[var(--text-muted)]">

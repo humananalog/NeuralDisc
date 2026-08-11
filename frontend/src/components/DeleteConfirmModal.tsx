@@ -121,8 +121,8 @@ export function DeleteConfirmModal({
         {filenames.length > 0 && (
           <div className="max-h-28 overflow-y-auto border-b border-[var(--border)] px-4 py-2">
             <ul className="space-y-0.5 text-[11px] text-[var(--text-muted)]">
-              {filenames.slice(0, 8).map((f) => (
-                <li key={f} className="truncate font-mono">
+              {filenames.slice(0, 8).map((f, i) => (
+                <li key={`${i}-${f}`} className="truncate font-mono">
                   {f}
                 </li>
               ))}

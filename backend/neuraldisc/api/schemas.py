@@ -244,6 +244,7 @@ class NavCountsOut(BaseModel):
     videos: int = 0
     discs: int = 0
     trash: int = 0
+    inference: int = 0  # pending (+ heuristic when VLM on)
 
 
 class AlbumOut(BaseModel):
@@ -251,7 +252,12 @@ class AlbumOut(BaseModel):
     name: str
     description: Optional[str] = None
     is_ai_proposed: bool = False
+    kind: str = "album"  # album | smart
+    source: Optional[str] = None
+    auto_key: Optional[str] = None
+    rules: Optional[dict[str, Any]] = None
     created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     item_count: int = 0
     cover_media_id: Optional[str] = None
 
@@ -262,6 +268,39 @@ class AlbumCreate(BaseModel):
     name: str
     description: Optional[str] = None
     media_ids: list[str] = Field(default_factory=list)
+    kind: str = "album"
+    rules: Optional[dict[str, Any]] = None
+
+
+class SmartCollectionCreate(BaseModel):
+    """User-defined smart collection with auto-name optional."""
+
+    name: Optional[str] = None  # auto-named if omitted
+    description: Optional[str] = None
+    rules: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutoOrganiseRequest(BaseModel):
+    include_years: bool = True
+    include_months: bool = True
+    include_cameras: bool = True
+    include_scenes: bool = True
+    include_tags: bool = True
+    include_discs: bool = True
+    include_events: bool = True
+    include_people: bool = True
+    include_smart: bool = True
+    min_members: int = 2
+
+
+class AutoOrganiseResponse(BaseModel):
+    albums_created: int = 0
+    albums_updated: int = 0
+    smart_created: int = 0
+    smart_updated: int = 0
+    members_linked: int = 0
+    details: list[dict[str, Any]] = Field(default_factory=list)
+    albums: list[AlbumOut] = Field(default_factory=list)
 
 
 class SearchRequest(BaseModel):
@@ -285,4 +324,5 @@ class DuplicateGroupOut(BaseModel):
     method: Optional[str] = None
     best_media_id: Optional[str] = None
     created_at: Optional[str] = None
+    active: bool = True
     members: list[dict[str, Any]]

@@ -62,6 +62,8 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
   const [keepBestMsg, setKeepBestMsg] = useState<string | null>(null);
   const [rotateBusy, setRotateBusy] = useState(false);
   const [rotateMsg, setRotateMsg] = useState<string | null>(null);
+  /** Per-id thumb remount epoch after rotate */
+  const [thumbEpoch, setThumbEpoch] = useState<Record<string, number>>({});
   /** Expanded in-app viewer (double-click / Backspace) */
   const [lightboxId, setLightboxId] = useState<string | null>(null);
   const knownIds = useRef<Set<string>>(new Set());
@@ -264,6 +266,35 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
 
   const canKeepBest = selectedIds.size >= 2;
 
+  function applyRotatedMedia(updated: MediaItem[]) {
+    const now = Date.now();
+    const byId = new Map(updated.map((m) => [m.id, m]));
+    setThumbEpoch((prev) => {
+      const next = { ...prev };
+      for (const m of updated) next[m.id] = (next[m.id] || 0) + 1 + (now % 1000);
+      return next;
+    });
+    setItems((prev) =>
+      prev.map((x) => {
+        const u = byId.get(x.id);
+        if (!u) return x;
+        const stamp = u.updated_at || new Date().toISOString();
+        // Ensure thumb/preview URLs carry a fresh client token even if server v= lags
+        const bump = (url?: string | null) => {
+          if (!url) return url;
+          const base = url.split("?")[0];
+          return `${base}?v=${encodeURIComponent(stamp)}&t=${now}`;
+        };
+        return {
+          ...u,
+          updated_at: stamp,
+          thumb_url: bump(u.thumb_url) ?? u.thumb_url,
+          preview_url: bump(u.preview_url) ?? u.preview_url,
+        };
+      }),
+    );
+  }
+
   /** Batch auto-rotate (aggressive content + EXIF) or manual 90° for selection. */
   async function handleBatchRotate(mode: "auto" | "cw" | "ccw" | "180" = "auto") {
     const ids = selectedItems
@@ -278,19 +309,7 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
     setError(null);
     try {
       const res = await api.batchRotateMedia(ids, mode, true);
-      const byId = new Map(res.items.map((m) => [m.id, m]));
-      setItems((prev) =>
-        prev.map((x) => {
-          const u = byId.get(x.id);
-          return u
-            ? {
-                ...u,
-                // force thumb cache bust
-                updated_at: u.updated_at || new Date().toISOString(),
-              }
-            : x;
-        }),
-      );
+      applyRotatedMedia(res.items);
       bumpLibrary();
       const failHint =
         res.count_failed > 0 ? ` · ${res.count_failed} failed` : "";
@@ -299,7 +318,9 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
           ? `Auto-rotate: fixed ${res.count_rotated}, already upright ${res.count_unchanged}${failHint}`
           : `Rotated ${res.count_rotated} image${res.count_rotated === 1 ? "" : "s"}${failHint}`,
       );
-      void load({ silent: true });
+      // Delayed silent refresh so new derivatives/URLs from server win without
+      // immediately clobbering the optimistic thumb bust.
+      window.setTimeout(() => void load({ silent: true }), 400);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Batch rotate failed");
     } finally {
@@ -459,6 +480,7 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
                 key={item.id}
                 item={item}
                 size={size}
+                refreshKey={thumbEpoch[item.id] || 0}
                 selected={selectedIds.has(item.id)}
                 onClick={(e) => {
                   const multi = e.metaKey || e.ctrlKey;
@@ -495,9 +517,9 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
         <DetailPanel
           item={active}
           onClose={() => setDetailOpen(false)}
-          onUpdated={(m) =>
-            setItems((prev) => prev.map((x) => (x.id === m.id ? m : x)))
-          }
+          onUpdated={(m) => {
+            applyRotatedMedia([m]);
+          }}
           onDeleted={(id) => {
             setItems((prev) => prev.filter((x) => x.id !== id));
             setTotal((t) => Math.max(0, t - 1));

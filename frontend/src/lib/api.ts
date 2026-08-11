@@ -100,6 +100,10 @@ export type Job = {
   created_at?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
+  /** True when status is active but this process has no worker thread */
+  stale?: boolean;
+  has_live_worker?: boolean;
+  live?: Record<string, unknown> | null;
 };
 
 export type Stats = {
@@ -139,6 +143,7 @@ export type NavCounts = {
   videos: number;
   discs: number;
   trash: number;
+  inference: number;
 };
 
 export const EMPTY_NAV_COUNTS: NavCounts = {
@@ -157,6 +162,7 @@ export const EMPTY_NAV_COUNTS: NavCounts = {
   videos: 0,
   discs: 0,
   trash: 0,
+  inference: 0,
 };
 
 export type Disc = {
@@ -174,9 +180,31 @@ export type Album = {
   name: string;
   description?: string | null;
   is_ai_proposed: boolean;
+  kind?: string; // album | smart
+  source?: string | null;
+  auto_key?: string | null;
+  rules?: Record<string, unknown> | null;
   item_count: number;
   cover_media_id?: string | null;
   created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AutoOrganiseResult = {
+  albums_created: number;
+  albums_updated: number;
+  smart_created: number;
+  smart_updated: number;
+  members_linked: number;
+  details: Array<{
+    auto_key: string;
+    name: string;
+    kind: string;
+    source: string;
+    count: number;
+    created: boolean;
+  }>;
+  albums: Album[];
 };
 
 export type DuplicateGroup = {
@@ -376,7 +404,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(media_ids),
     }),
-  jobs: () => request<Job[]>("/api/jobs"),
+  jobs: (status?: string) =>
+    request<Job[]>(`/api/jobs${qs({ status, limit: 50 })}`),
   cancelJob: (jobId: string) =>
     request<{
       job_id: string;
@@ -386,13 +415,127 @@ export const api = {
       message?: string;
       job?: Job;
     }>(`/api/jobs/${jobId}/cancel`, { method: "POST" }),
+  reapStaleJobs: (force = false) =>
+    request<{
+      reaped: Array<{
+        id: string;
+        job_type: string;
+        was: string;
+        completed?: number;
+        total?: number;
+      }>;
+      count: number;
+      reason: string;
+      live_workers: string[];
+    }>(`/api/jobs/reap-stale${qs({ force })}`, { method: "POST" }),
+  jobsLive: () =>
+    request<{ workers: unknown[]; worker_ids: string[]; ts: string }>(
+      "/api/jobs/live",
+    ),
+  resumeJob: (jobId: string) =>
+    request<{
+      ok: boolean;
+      job_id: string;
+      message: string;
+      job?: Job;
+    }>(`/api/jobs/${jobId}/resume`, { method: "POST" }),
+  inferenceStatus: () =>
+    request<{
+      vlm_enabled: boolean;
+      vlm_model: string;
+      total_library: number;
+      with_analysis: number;
+      pending: number;
+      heuristic: number;
+      vlm_done: number;
+      queue: number;
+      coverage_pct: number;
+      vlm_pct: number;
+      active_job: {
+        id: string;
+        status: string;
+        progress: number;
+        completed: number;
+        total: number;
+        message?: string | null;
+      } | null;
+    }>("/api/inference/status"),
+  inferenceQueue: (mode: "pending" | "heuristic" | "all" = "all", limit = 50) =>
+    request<{
+      total: number;
+      offset: number;
+      limit: number;
+      mode: string;
+      items: Array<MediaItem & { inference_state: string }>;
+    }>(`/api/inference/queue${qs({ mode, limit })}`),
+  runInference: (limit = 100, force_heuristic = true) =>
+    request<{
+      job_id: string | null;
+      queued: number;
+      message: string;
+      vlm_enabled?: boolean;
+    }>(
+      `/api/inference/run${qs({ limit, force_heuristic })}`,
+      { method: "POST" },
+    ),
+  reanalyseMedia: (id: string) =>
+    request<{
+      media_id: string;
+      ok: boolean;
+      model_name?: string | null;
+      media: MediaItem;
+      vlm_released?: boolean;
+    }>(`/api/inference/${id}/reanalyse`, { method: "POST" }),
+  /** Unload VLM + clear MLX Metal cache (free GPU for other apps). */
+  releaseInference: () =>
+    request<{
+      released: boolean;
+      models?: string[];
+      metal_active_before?: number | null;
+      metal_active_after?: number | null;
+      refcount?: number;
+      reason?: string;
+    }>("/api/inference/release", { method: "POST" }),
   discs: () => request<Disc[]>("/api/discs"),
   ingest: (path: string, volume_name?: string) =>
     request<{ disc_id: string; files: number; errors: string[]; volume_name: string }>(
       "/api/discs/ingest",
       { method: "POST", body: JSON.stringify({ path, volume_name, process: true }) },
     ),
-  albums: () => request<Album[]>("/api/albums"),
+  albums: (params?: { kind?: string; source?: string }) =>
+    request<Album[]>(`/api/albums${qs((params || {}) as Record<string, string>)}`),
+  albumOne: (id: string) => request<Album>(`/api/albums/${id}`),
+  albumMedia: (id: string, limit = 100, offset = 0) =>
+    request<MediaListResponse>(
+      `/api/albums/${id}/media${qs({ limit, offset })}`,
+    ),
+  autoOrganiseAlbums: (body: Partial<{
+    include_years: boolean;
+    include_months: boolean;
+    include_cameras: boolean;
+    include_scenes: boolean;
+    include_tags: boolean;
+    include_discs: boolean;
+    include_events: boolean;
+    include_people: boolean;
+    include_smart: boolean;
+    min_members: number;
+  }> = {}) =>
+    request<AutoOrganiseResult>("/api/albums/auto-organise", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  createSmartCollection: (body: {
+    name?: string;
+    description?: string;
+    rules: Record<string, unknown>;
+  }) =>
+    request<Album>("/api/albums/smart", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteAlbum: (id: string) =>
+    request<{ deleted: string }>(`/api/albums/${id}`, { method: "DELETE" }),
   duplicates: () => request<DuplicateGroup[]>("/api/duplicates"),
   duplicatesSummary: () =>
     request<{
@@ -476,6 +619,17 @@ export const api = {
     }),
   importStatus: (jobId: string) => request<ImportStatus>(`/api/import/${jobId}`),
   importLive: () => request<ImportStatus[]>("/api/import/live"),
+  processStatus: () =>
+    request<{
+      status: string;
+      pending: number;
+      processing: number;
+      promoted_session: number;
+      rejected_session: number;
+      errors_session: number;
+      last_message: string;
+      workers: number;
+    }>("/api/import/process/status"),
   importVolumes: (countMedia = true) =>
     request<
       Array<{
@@ -522,6 +676,9 @@ export type ImportStatus = {
   library_root?: string;
   staging_dir?: string;
   cancel_requested?: boolean;
+  /** Copy finished — optical drive free; process continues in background */
+  disc_ready?: boolean;
+  copy_only?: boolean;
 };
 
 export type DuplicateSummary = {

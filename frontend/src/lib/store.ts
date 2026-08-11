@@ -27,7 +27,13 @@ type AppState = {
   };
   detailOpen: boolean;
   jobsOpen: boolean;
+  /** Full import dialog visible (blocks center of screen) */
   importOpen: boolean;
+  /**
+   * Import session minimized to a dock chip — form state is kept,
+   * library UI is free. Expand via chip or Import button.
+   */
+  importMinimized: boolean;
   pendingReview: number;
   /** Active duplicate groups count for sidebar badge */
   duplicatesCount: number;
@@ -50,6 +56,13 @@ type AppState = {
   setDetailOpen: (v: boolean) => void;
   setJobsOpen: (v: boolean) => void;
   setImportOpen: (v: boolean) => void;
+  setImportMinimized: (v: boolean) => void;
+  /** Open full import dialog (clears minimized). */
+  expandImport: () => void;
+  /** Collapse dialog to dock chip; keep form state. */
+  minimizeImport: () => void;
+  /** Fully close import UI (caller may reset form). */
+  closeImport: () => void;
   setPendingReview: (n: number) => void;
   setDuplicatesCount: (n: number) => void;
   setNavCounts: (c: NavCounts) => void;
@@ -72,6 +85,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   detailOpen: false,
   jobsOpen: false,
   importOpen: false,
+  importMinimized: false,
   pendingReview: 0,
   duplicatesCount: 0,
   navCounts: { ...EMPTY_NAV_COUNTS },
@@ -115,6 +129,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setDetailOpen: (v) => set({ detailOpen: v }),
   setJobsOpen: (v) => set({ jobsOpen: v }),
   setImportOpen: (v) => set({ importOpen: v }),
+  setImportMinimized: (v) => set({ importMinimized: v }),
+  expandImport: () => set({ importOpen: true, importMinimized: false }),
+  minimizeImport: () => set({ importOpen: false, importMinimized: true }),
+  closeImport: () => set({ importOpen: false, importMinimized: false }),
   setPendingReview: (n) => set({ pendingReview: n }),
   setDuplicatesCount: (n) => set({ duplicatesCount: n }),
   setNavCounts: (c) =>

@@ -69,6 +69,8 @@ class ImportStatusResponse(BaseModel):
     library_root: str | None = None
     staging_dir: str | None = None
     cancel_requested: bool = False
+    copy_only: bool = True
+    disc_ready: bool = False
 
 
 @router.post("", response_model=ImportStartResponse)
@@ -133,9 +135,15 @@ def start_import_job(body: ImportRequest) -> ImportStartResponse:
 
     job_id = start_import(sources)
     log.info("import_started", job_id=job_id, sources=len(sources), mode=body.mode)
+    msg = (
+        f"Copy queued for {len(sources)} source(s) — serial disc queue; "
+        f"classification runs in background after copy"
+        if cfg.import_copy_only
+        else f"Import started for {len(sources)} source(s)"
+    )
     return ImportStartResponse(
         job_id=job_id,
-        message=f"Import started for {len(sources)} source(s)",
+        message=msg,
         sources=len(sources),
     )
 
@@ -143,6 +151,35 @@ def start_import_job(body: ImportRequest) -> ImportStartResponse:
 @router.get("/live", response_model=list[ImportStatusResponse])
 def live_imports() -> list[dict]:
     return list_live_imports()
+
+
+@router.get("/process/status")
+def process_status() -> dict:
+    """Background staging processor (classify / promote) — independent of copy."""
+    from neuraldisc.ingest.staging_processor import (
+        get_process_state,
+        staging_pending_count,
+        wake_processor,
+    )
+
+    wake_processor()
+    state = get_process_state()
+    state["pending"] = staging_pending_count()
+    return state
+
+
+@router.post("/process/wake")
+def process_wake() -> dict:
+    """Nudge the staging processor (e.g. after manual file drops)."""
+    from neuraldisc.ingest.staging_processor import (
+        ensure_processor_running,
+        get_process_state,
+        wake_processor,
+    )
+
+    ensure_processor_running()
+    wake_processor()
+    return {"ok": True, **get_process_state()}
 
 
 @router.get("/suggestions/volumes")

@@ -78,6 +78,9 @@ Rules:
 
 _model_lock = threading.Lock()
 _model_cache: dict[str, Any] = {}
+# Reference count for nested batch/single analysis so we only release when idle
+_load_refcount = 0
+_load_refcount_lock = threading.Lock()
 
 
 def analyse_media(session: Session, media: MediaItem, settings: Settings) -> MediaAnalysis | None:
@@ -190,8 +193,93 @@ def _get_model(settings: Settings) -> tuple[Any, Any, Any]:
         model, processor = load(key)
         config = load_config(key)
         _model_cache[key] = (model, processor, config)
-        log.info("vlm_loaded", model=key)
+        try:
+            import mlx.core as mx
+
+            active = mx.metal.get_active_memory() if mx.metal.is_available() else None
+            log.info("vlm_loaded", model=key, metal_active_bytes=active)
+        except Exception:  # noqa: BLE001
+            log.info("vlm_loaded", model=key)
         return model, processor, config
+
+
+def release_vlm(*, force: bool = False) -> dict[str, Any]:
+    """Unload cached VLM weights and clear MLX Metal cache.
+
+    Call after inference batches so other apps (e.g. mlx_lm server on :8088)
+    can reclaim unified memory. Safe to call when nothing is loaded.
+    """
+    global _load_refcount
+    with _load_refcount_lock:
+        if not force and _load_refcount > 0:
+            return {
+                "released": False,
+                "reason": "in_use",
+                "refcount": _load_refcount,
+                "loaded": list(_model_cache.keys()),
+            }
+
+    freed_models: list[str] = []
+    with _model_lock:
+        freed_models = list(_model_cache.keys())
+        _model_cache.clear()
+
+    # Drop Python refs then clear Metal allocator cache
+    import gc
+
+    gc.collect()
+    metal_before = metal_after = None
+    try:
+        import mlx.core as mx
+
+        if mx.metal.is_available():
+            metal_before = mx.metal.get_active_memory()
+            mx.clear_cache()
+            mx.metal.clear_cache()
+            gc.collect()
+            metal_after = mx.metal.get_active_memory()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("mlx_clear_cache_failed", error=str(exc))
+
+    with _load_refcount_lock:
+        if force:
+            _load_refcount = 0
+
+    log.info(
+        "vlm_released",
+        models=freed_models,
+        force=force,
+        metal_before=metal_before,
+        metal_after=metal_after,
+    )
+    return {
+        "released": True,
+        "models": freed_models,
+        "metal_active_before": metal_before,
+        "metal_active_after": metal_after,
+        "refcount": _load_refcount,
+    }
+
+
+class vlm_session:
+    """Context manager: keep model loaded for a batch, release MLX on exit."""
+
+    def __init__(self, *, release_on_exit: bool = True) -> None:
+        self.release_on_exit = release_on_exit
+
+    def __enter__(self) -> "vlm_session":
+        global _load_refcount
+        with _load_refcount_lock:
+            _load_refcount += 1
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        global _load_refcount
+        with _load_refcount_lock:
+            _load_refcount = max(0, _load_refcount - 1)
+            still = _load_refcount
+        if self.release_on_exit and still == 0:
+            release_vlm(force=True)
 
 
 def _run_mlx_vlm(path: Path, settings: Settings) -> dict[str, Any] | None:
@@ -329,7 +417,7 @@ def _normalize_result(result: dict[str, Any], media: MediaItem) -> dict[str, Any
 
 
 def vlm_status(settings: Settings) -> dict[str, Any]:
-    """Report whether VLM can run."""
+    """Report whether VLM can run and current Metal memory use."""
     try:
         import mlx  # noqa: F401
         import mlx_vlm  # noqa: F401
@@ -338,10 +426,29 @@ def vlm_status(settings: Settings) -> dict[str, Any]:
     except ImportError as exc:
         return {"available": False, "error": f"import failed: {exc}", "enabled": settings.vlm_enabled}
 
+    metal: dict[str, Any] = {}
+    try:
+        import mlx.core as mx
+
+        if mx.metal.is_available():
+            metal = {
+                "available": True,
+                "active_bytes": mx.metal.get_active_memory(),
+                "cache_bytes": mx.metal.get_cache_memory(),
+                "peak_bytes": mx.metal.get_peak_memory(),
+            }
+        else:
+            metal = {"available": False}
+    except Exception as exc:  # noqa: BLE001
+        metal = {"available": False, "error": str(exc)}
+
     return {
         "available": True,
         "enabled": settings.vlm_enabled,
         "model": settings.vlm_model,
         "loaded": settings.vlm_model in _model_cache,
+        "loaded_models": list(_model_cache.keys()),
+        "refcount": _load_refcount,
         "mlx_ok": mlx_ok,
+        "metal": metal,
     }

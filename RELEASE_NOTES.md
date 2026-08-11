@@ -1,43 +1,48 @@
 # Release Notes
 
-## NeuralDisc v0.2.0 — First full local library (2026-08-11)
+## NeuralDisc v0.3.0 — Copy-first discs, inference, smart albums (2026-08-11)
 
-**Fully autonomous, local-first photo & video library for Apple Silicon.**
-
-This release delivers a working end-to-end product: insert (or point at) a disc/folder, import at high throughput onto a target SSD, classify with quality + EXIF + optional local VLM, review in a modern dark UI, fix rotation, resolve duplicates, and manage trash — without cloud dependency.
+**Version: 0.3.0** (backend + UI)
 
 ### Highlights
 
 | Area | What you get |
 |------|----------------|
-| **Import** | Stage-first pipeline on the **library target volume** (never system `/tmp`). Live panel as files promote. |
-| **Quality** | Junk rejection (icons, tiny web assets, extreme aspect ratios). Blur detection. |
-| **Metadata** | **exiftool-only** EXIF/GPS/camera. SHA-256 + perceptual hashes. |
-| **AI** | mlx-vlm hooks (Qwen3-VL class); HF token stored encrypted. Heuristic fallback when VLM off. |
-| **Duplicates** | Exact + pHash groups; **Keep best** one-by-one, multi-select batch, or all groups. |
-| **Orientation** | Auto-rotate (EXIF + content) on import and as **batch selection** action. Manual 90°/180°. |
-| **Catalogue** | Trash (soft delete) + permanent delete with confirmation. Restore from Trash filter. |
-| **Jobs** | Progress tracking; **Cancel** running imports/processing. |
-| **UI** | Lightroom/Immich-style dark UI: live sidebar counts, filters, detail inference panel, **lightbox** (double-click / Backspace). |
+| **Copy-first import** | Serial disc queue; parallel file copy to **staging on library SSD**. Job completes when copy finishes → **eject and insert next disc**. |
+| **Background process** | Global staging worker: EXIF, blur, derivatives, optional VLM, promote — **does not block** the next copy. |
+| **Inference** | Nav section: coverage, heuristic queue, batch/single re-run; **Release MLX** so peer apps (`mlx_lm` :8088, etc.) reclaim GPU. |
+| **Resume** | Interrupted imports: drain staging + re-scan sources, skip SHA-256 already in library. |
+| **Jobs** | Stale/orphan reap after API restart; live-worker registry for import + inference. |
+| **Smart albums** | Auto-organise from EXIF + AI (years, cameras, scenes, events, discs). |
+| **AI-first** | No HITL Review queue — AI accepts by default; refine in **Library** after inference. |
+| **Import UI** | Collapsible import modal + dock; “disc free” when copy done. |
 
 ### Run it
 
 ```bash
-# Prerequisites
 brew install ffmpeg python@3.12 exiftool
 
-# Backend
 cd backend && python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 neuraldisc init
 neuraldisc serve --host 127.0.0.1 --port 8000
 
-# Frontend (second terminal) — port 3020
 cd frontend && npm install && npm run dev -- --port 3020 --hostname 127.0.0.1
 # → http://127.0.0.1:3020
 ```
 
-Optional: `./scripts/dev.sh` · set library root in **Settings** or `NEURALDISC_LIBRARY_ROOT`.
+Optional: `./scripts/dev.sh` · `NEURALDISC_LIBRARY_ROOT=/Volumes/YourSSD/NeuralDisc`  
+VLM: Settings → enable VLM + HF token; `pip install -e ".[ai]"` if needed.
+
+### Env / pipeline knobs
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `NEURALDISC_IMPORT_COPY_ONLY` | `true` | Copy ≠ process (fast disc rotation) |
+| `NEURALDISC_IMPORT_COPY_SERIAL` | `true` | One disc import at a time |
+| `NEURALDISC_IMPORT_COPY_WORKERS` | `6` | Parallel copy threads |
+| `NEURALDISC_IMPORT_PROCESS_WORKERS` | `2` | Background classify workers |
+| `NEURALDISC_VLM_ENABLED` | `false` | Local mlx-vlm captions |
 
 ### Ports
 
@@ -46,20 +51,26 @@ Optional: `./scripts/dev.sh` · set library root in **Settings** or `NEURALDISC_
 | API + OpenAPI docs | http://127.0.0.1:8000 · `/docs` |
 | Web UI | http://127.0.0.1:3020 |
 
-### Breaking / notes for early adopters
+### Day-to-day disc workflow
 
-- Library layout requires `library/staging` under `library_root` (target SSD).
-- Permanent delete is irreversible; soft-delete (Trash) is the default.
-- VLM is off by default; enable in Settings + HF token for full captions.
-- SQLite WAL; concurrent import writers use busy timeout + serialization.
+1. **Import** full disc → watch **Copied** in the live panel.  
+2. When **Disc free / eject OK** → pull disc, queue the next import.  
+3. Library fills as the **background processor** promotes files.  
+4. **Inference** upgrades heuristic captions when GPU is free; **Release MLX** when done.  
+5. **Duplicates** / Library for keep-best, rotate, trash.
 
-### Known limitations (next phases)
+### Breaking / notes
 
-- People / face clustering not implemented (placeholder page).
-- Map is GPS list (full MapLibre tiles later).
-- Semantic search embeddings optional / partial.
-- Video DVD VIDEO_TS deep rip still limited vs data discs.
-- Organisation “commit to albums by event” workflow incomplete.
+- HITL Review nav removed; `/review` redirects to Library. Legacy pending rows auto-accepted on API start.  
+- Import job “completed” means **copy finished**, not full VLM coverage.  
+- Staging remains under `library_root` only (never `/tmp`).
+
+### Known limitations
+
+- People / face clustering not implemented.  
+- Map is GPS list (MapLibre later).  
+- Semantic embeddings optional / partial.  
+- VIDEO_TS deep rip still limited vs data discs.
 
 ### Documentation
 
@@ -78,4 +89,10 @@ Optional: `./scripts/dev.sh` · set library root in **Settings** or `NEURALDISC_
 
 ---
 
-*Tag: `v0.2.0`*
+## NeuralDisc v0.2.0 — First full local library (2026-08-11)
+
+Stage-first import, quality gates, duplicates, trash, jobs cancel, and first Web UI. See git history and [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+*Tags: `v0.3.0` (current) · `v0.2.0`*

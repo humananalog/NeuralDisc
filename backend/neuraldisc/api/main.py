@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from neuraldisc import __version__
 from neuraldisc.api.routes import albums, discs, duplicates, hitl, jobs, media, stats
-from neuraldisc.api.routes import import_routes
+from neuraldisc.api.routes import import_routes, inference
 from neuraldisc.api.routes import settings as settings_routes
 from neuraldisc.api.schemas import HealthResponse
 from neuraldisc.config import get_settings
@@ -51,7 +51,65 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         version=__version__,
         library=str(cfg.library_root),
     )
+    # In-process workers die with the old process — close stuck running/queued rows
+    try:
+        from neuraldisc.jobs.control import recover_jobs_on_startup
+
+        recover_jobs_on_startup()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("job_recovery_failed", error=str(exc))
+
+    # Global staging processor: classify/promote without blocking disc copy
+    try:
+        from neuraldisc.ingest.staging_processor import ensure_processor_running, wake_processor
+
+        ensure_processor_running(cfg)
+        wake_processor()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("staging_processor_boot_failed", error=str(exc))
+
+    # One-shot: close legacy HITL queue — AI decisions stand
+    try:
+        from datetime import datetime, timezone
+
+        from neuraldisc.db.database import session_scope
+        from neuraldisc.db.models import HitlQueueItem, MediaItem
+
+        with session_scope() as session:
+            now = datetime.now(timezone.utc)
+            n_media = (
+                session.query(MediaItem)
+                .filter(MediaItem.hitl_status == "pending")
+                .update(
+                    {MediaItem.hitl_status: "accepted", MediaItem.updated_at: now},
+                    synchronize_session=False,
+                )
+            )
+            open_items = (
+                session.query(HitlQueueItem)
+                .filter(HitlQueueItem.resolved_at.is_(None))
+                .all()
+            )
+            for item in open_items:
+                item.resolved_at = now
+                item.resolution = "accepted"
+            if n_media or open_items:
+                log.info(
+                    "hitl_auto_accepted",
+                    media=n_media,
+                    queue_items=len(open_items),
+                )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("hitl_auto_accept_failed", error=str(exc))
+
     yield
+
+    try:
+        from neuraldisc.ingest.staging_processor import stop_processor
+
+        stop_processor(timeout=3.0)
+    except Exception:  # noqa: BLE001
+        pass
     log.info("neuraldisc_api_stop")
 
 
@@ -80,6 +138,7 @@ def create_app() -> FastAPI:
     app.include_router(duplicates.router)
     app.include_router(settings_routes.router)
     app.include_router(import_routes.router)
+    app.include_router(inference.router)
 
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> HealthResponse:

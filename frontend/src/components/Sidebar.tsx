@@ -9,15 +9,16 @@ import {
   Users,
   Images,
   Copy,
-  CheckSquare,
   Activity,
   BarChart3,
   Disc3,
   Settings,
+  Brain,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
 import type { NavCounts } from "@/lib/api";
+import { APP_VERSION_LABEL } from "@/lib/version";
 
 type NavKey = keyof NavCounts;
 
@@ -43,10 +44,10 @@ const NAV: Array<{
     alert: true,
   },
   {
-    href: "/review",
-    label: "Review",
-    icon: CheckSquare,
-    countKey: "review",
+    href: "/inference",
+    label: "Inference",
+    icon: Brain,
+    countKey: "inference",
     alert: true,
   },
   { href: "/jobs", label: "Jobs", icon: Activity, countKey: "jobs", alert: true },
@@ -70,7 +71,15 @@ export function Sidebar() {
       <div className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-4">
         <Disc3 className="h-5 w-5 text-[var(--accent)]" strokeWidth={1.75} />
         <div className="min-w-0 flex-1">
-          <div className="text-[15px] font-semibold tracking-tight">NeuralDisc</div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-[15px] font-semibold tracking-tight">NeuralDisc</span>
+            <span
+              className="rounded bg-[var(--bg-hover)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]"
+              title="App version"
+            >
+              {APP_VERSION_LABEL}
+            </span>
+          </div>
           <div className="truncate text-[11px] text-[var(--text-muted)]">
             {navCounts.library > 0
               ? `${navCounts.library.toLocaleString()} in library`
@@ -133,7 +142,12 @@ export function Sidebar() {
             </span>
           </div>
         )}
-        <div>Privacy-first · Apple Silicon · Offline</div>
+        <div className="flex items-center justify-between gap-2">
+          <span>Local · Apple Silicon</span>
+          <span className="font-mono tabular-nums text-[var(--text-secondary)]">
+            {APP_VERSION_LABEL}
+          </span>
+        </div>
       </div>
     </aside>
   );

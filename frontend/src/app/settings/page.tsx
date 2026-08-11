@@ -8,6 +8,7 @@ import {
   type VolumeSuggestion,
 } from "@/lib/api";
 import { cn, formatBytes } from "@/lib/utils";
+import { APP_VERSION } from "@/lib/version";
 import {
   FolderOpen,
   HardDrive,
@@ -540,7 +541,7 @@ export default function SettingsPage() {
 
         {settings && (
           <p className="text-[11px] text-[var(--text-muted)]">
-            NeuralDisc v{settings.version} · local-first · no cloud
+            API v{settings.version} · UI v{APP_VERSION} · local-first · no cloud
           </p>
         )}
       </div>

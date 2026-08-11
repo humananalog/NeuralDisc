@@ -10,7 +10,7 @@ from typing import Literal
 
 from neuraldisc.ai.duplicates import find_duplicates_for_media
 from neuraldisc.ai.embeddings import generate_embedding
-from neuraldisc.ai.vlm import analyse_media
+from neuraldisc.ai.vlm import analyse_media, release_vlm, vlm_session
 from neuraldisc.config import Settings, get_settings
 from neuraldisc.db.database import session_scope
 from neuraldisc.db.fts import upsert_fts
@@ -61,6 +61,12 @@ def enqueue_post_ingest(disc_id: str) -> str:
                 job.error = str(exc)
                 job.finished_at = datetime.now(timezone.utc)
     finally:
+        # Free VLM / Metal for peer apps (mlx_lm :8088, etc.)
+        try:
+            rel = release_vlm(force=True)
+            log.info("post_ingest_mlx_released", disc_id=disc_id, **rel)
+        except Exception as rel_exc:  # noqa: BLE001
+            log.warning("post_ingest_release_failed", error=str(rel_exc))
         # If still running after process_disc returned early due to cancel, ensure status
         with session_scope() as session:
             job = session.get(Job, job_id)
@@ -101,32 +107,34 @@ def process_disc(disc_id: str, job_id: str | None = None) -> None:
                 job.message = f"Processing {len(media_ids)} items"
 
     cancelled = False
-    for i, mid in enumerate(media_ids):
-        if job_id and is_cancel_requested(job_id):
-            cancelled = True
-            mark_cancelled(
-                job_id,
-                f"Cancelled after {i}/{len(media_ids)} items",
-            )
-            log.info("post_ingest_cancelled", disc_id=disc_id, completed=i)
-            break
-        try:
-            process_media_item(
-                mid,
-                settings,
-                promote=settings.import_stage_until_classified,
-                provenance=provenance,
-                originals_root=originals_root,
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.error("process_item_failed", media_id=mid, error=str(exc))
-        if job_id:
-            with session_scope() as session:
-                job = session.get(Job, job_id)
-                if job and job.status != "cancelled":
-                    job.completed = i + 1
-                    job.progress = (i + 1) / max(len(media_ids), 1)
-                    job.message = f"Processed {i + 1}/{len(media_ids)}"
+    # Hold VLM for the whole disc batch; release on exit for peer MLX apps
+    with vlm_session(release_on_exit=True):
+        for i, mid in enumerate(media_ids):
+            if job_id and is_cancel_requested(job_id):
+                cancelled = True
+                mark_cancelled(
+                    job_id,
+                    f"Cancelled after {i}/{len(media_ids)} items",
+                )
+                log.info("post_ingest_cancelled", disc_id=disc_id, completed=i)
+                break
+            try:
+                process_media_item(
+                    mid,
+                    settings,
+                    promote=settings.import_stage_until_classified,
+                    provenance=provenance,
+                    originals_root=originals_root,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error("process_item_failed", media_id=mid, error=str(exc))
+            if job_id:
+                with session_scope() as session:
+                    job = session.get(Job, job_id)
+                    if job and job.status != "cancelled":
+                        job.completed = i + 1
+                        job.progress = (i + 1) / max(len(media_ids), 1)
+                        job.message = f"Processed {i + 1}/{len(media_ids)}"
 
     if job_id and not cancelled:
         with session_scope() as session:
@@ -135,7 +143,7 @@ def process_disc(disc_id: str, job_id: str | None = None) -> None:
                 job.status = "completed"
                 job.progress = 1.0
                 job.finished_at = datetime.now(timezone.utc)
-                job.message = f"Completed {len(media_ids)} items"
+                job.message = f"Completed {len(media_ids)} items · MLX released"
 
 
 def process_media_item(
@@ -343,8 +351,10 @@ def _promote_media(
             shutil.move(str(src), str(dest))
         media.library_path = str(dest)
         media.lifecycle = "library"
+        # AI decides — no HITL queue. Human can edit captions / trash later in Library.
+        media.hitl_status = "accepted"
         media.updated_at = datetime.now(timezone.utc)
-        _ensure_hitl(session, media, settings)
+        _close_open_hitl(session, media, resolution="accepted")
         session.flush()
         log.info("media_promoted", media_id=media.id, dest=str(dest))
         return True
@@ -353,36 +363,16 @@ def _promote_media(
         return False
 
 
-def _ensure_hitl(session, media: MediaItem, settings: Settings) -> None:
-    existing = (
+def _close_open_hitl(session, media: MediaItem, *, resolution: str = "accepted") -> None:
+    """Resolve any leftover HITL rows (legacy) so nothing sits in review."""
+    now = datetime.now(timezone.utc)
+    for item in (
         session.query(HitlQueueItem)
         .filter(HitlQueueItem.media_id == media.id, HitlQueueItem.resolved_at.is_(None))
-        .first()
-    )
-    priority = 100
-    queue_type = "new_item"
-    if media.analysis and media.analysis.confidence is not None:
-        if media.analysis.confidence < settings.low_confidence_threshold:
-            queue_type = "low_confidence"
-            priority = 10
-    if media.is_duplicate:
-        queue_type = "duplicate"
-        priority = min(priority, 20)
-    if media.is_blurry:
-        queue_type = "blurry"
-        priority = min(priority, settings.blur_hitl_priority)
-
-    if existing:
-        existing.queue_type = queue_type
-        existing.priority = priority
-    else:
-        session.add(
-            HitlQueueItem(
-                media_id=media.id,
-                queue_type=queue_type,
-                priority=priority,
-            )
-        )
+        .all()
+    ):
+        item.resolved_at = now
+        item.resolution = resolution
 
 
 def _purge_rejected_media(

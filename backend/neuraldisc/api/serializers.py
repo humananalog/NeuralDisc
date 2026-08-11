@@ -3,11 +3,35 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 from neuraldisc.api.schemas import AnalysisOut, MediaOut
 from neuraldisc.config import Settings, get_settings
 from neuraldisc.db.models import MediaAnalysis, MediaItem
+
+
+def _media_asset_version(media: MediaItem, asset_path: Path | None = None) -> str:
+    """Cache-bust token so browsers reload thumbs after rotate/rewrite.
+
+    Combines updated_at, rotation, sha256 prefix, and derivative mtime when present.
+    """
+    parts: list[str] = []
+    ua = getattr(media, "updated_at", None)
+    if isinstance(ua, datetime):
+        parts.append(str(int(ua.timestamp() * 1000)))
+    rot = int(getattr(media, "rotation_degrees", 0) or 0)
+    parts.append(f"r{rot}")
+    sha = (media.sha256 or "")[:12]
+    if sha:
+        parts.append(sha)
+    if asset_path is not None:
+        try:
+            if asset_path.is_file():
+                parts.append(str(int(asset_path.stat().st_mtime_ns)))
+        except OSError:
+            pass
+    return "-".join(parts) if parts else "0"
 
 
 def media_to_out(media: MediaItem, settings: Settings | None = None) -> MediaOut:
@@ -18,6 +42,8 @@ def media_to_out(media: MediaItem, settings: Settings | None = None) -> MediaOut
 
     thumb = settings.thumbs_dir / f"{media.id}.jpg"
     preview = settings.previews_dir / f"{media.id}.jpg"
+    thumb_v = _media_asset_version(media, thumb if thumb.exists() else None)
+    preview_v = _media_asset_version(media, preview if preview.exists() else None)
 
     return MediaOut(
         id=media.id,
@@ -54,9 +80,12 @@ def media_to_out(media: MediaItem, settings: Settings | None = None) -> MediaOut
         original_path=media.original_path,
         created_at=media.created_at,
         updated_at=media.updated_at,
-        thumb_url=f"/api/media/{media.id}/thumb" if thumb.exists() else None,
-        preview_url=f"/api/media/{media.id}/preview" if preview.exists() else None,
-        original_url=f"/api/media/{media.id}/original",
+        # Version query forces immediate thumb refresh after rotate
+        thumb_url=f"/api/media/{media.id}/thumb?v={thumb_v}" if thumb.exists() else None,
+        preview_url=(
+            f"/api/media/{media.id}/preview?v={preview_v}" if preview.exists() else None
+        ),
+        original_url=f"/api/media/{media.id}/original?v={thumb_v}",
         analysis=analysis,
     )
 

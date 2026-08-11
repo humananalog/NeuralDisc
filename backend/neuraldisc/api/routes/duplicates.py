@@ -6,11 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from fastapi import Query
+
 from neuraldisc.ai.duplicates import (
     duplicate_summary,
     keep_best_batch,
     keep_best_for_group,
     list_duplicate_groups,
+    prune_resolved_duplicate_groups,
 )
 from neuraldisc.api.schemas import DuplicateGroupOut
 from neuraldisc.db.database import get_db
@@ -37,12 +40,30 @@ class KeepBestBatchRequest(BaseModel):
 @router.get("/summary")
 def get_duplicate_summary(db: Session = Depends(get_db)) -> dict:
     """Top counts for the Duplicates page header and nav badge."""
-    return duplicate_summary(db)
+    out = duplicate_summary(db)
+    db.commit()  # persist prune from summary
+    return out
 
 
 @router.get("", response_model=list[DuplicateGroupOut])
-def list_groups(db: Session = Depends(get_db)) -> list[dict]:
-    return list_duplicate_groups(db)
+def list_groups(
+    include_resolved: bool = Query(
+        False,
+        description="If true, include groups with <2 library members (ghosts)",
+    ),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    out = list_duplicate_groups(db, include_resolved=include_resolved, prune=True)
+    db.commit()  # persist prune so next load stays clean
+    return out
+
+
+@router.post("/cleanup")
+def cleanup_resolved(db: Session = Depends(get_db)) -> dict:
+    """Remove trashed members from groups and dissolve resolved groups."""
+    result = prune_resolved_duplicate_groups(db)
+    db.commit()
+    return result
 
 
 @router.post("/keep-best-batch")

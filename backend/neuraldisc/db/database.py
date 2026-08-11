@@ -87,6 +87,13 @@ def create_all(engine: Engine | None = None) -> None:
         _ensure_column(conn, "media_items", "deleted_at", "TIMESTAMP")
         _ensure_column(conn, "media_items", "auto_rotated", "BOOLEAN DEFAULT 0")
         _ensure_column(conn, "media_items", "rotation_degrees", "INTEGER DEFAULT 0")
+        # Albums / smart collections
+        _ensure_column(conn, "albums", "kind", "TEXT DEFAULT 'album'")
+        _ensure_column(conn, "albums", "auto_key", "TEXT")
+        _ensure_column(conn, "albums", "rules_json", "TEXT")
+        _ensure_column(conn, "albums", "source", "TEXT")
+        _ensure_column(conn, "albums", "cover_media_id", "TEXT")
+        _ensure_column(conn, "albums", "updated_at", "TIMESTAMP")
     log.info("database_schema_ready", path=str(eng.url))
 
 

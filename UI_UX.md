@@ -96,7 +96,7 @@ Lucide icons (via shadcn/ui). Consistent 16 / 20 / 24 px sizes. Stroke weight 1.
 - **People** — face clusters (Phase 3+)
 - **Albums** — user + AI-proposed collections
 - **Duplicates** — dedicated management surface
-- **Review** — HITL queue (badge shows pending count)
+- **Inference** — VLM/heuristic queue (badge shows pending classify work)
 - **Jobs** — background processing status
 - **Stats** — library health dashboard
 
@@ -311,8 +311,8 @@ Mobile phones are out of scope for v1 (local network usage is desktop-centric).
 1. Dark theme tokens live in CSS variables; light theme is a class toggle.
 2. All media URLs are local (relative to the FastAPI static / media endpoint).
 3. Selection state is global (Zustand or equivalent) so it survives view switches.
-4. HITL queue is the default landing page when pending items > 0.
-5. Every AI field must support one-click “promote to human” or inline edit.
+4. Default landing is Library; Inference is the AI upgrade surface.
+5. AI fields are editable in the detail panel after inference (no mandatory HITL).
 6. Permanent delete always shows a confirmation modal with count of items affected and a “type DELETE to confirm” for large batches.
 7. Double-click (or Backspace on selection) expands the image in an in-app lightbox; Esc/Backspace closes; arrows navigate.
 8. Multi-select supports batch **Auto-rotate**, **Keep best**, and **Delete** from the library selection bar.
@@ -325,14 +325,14 @@ Mobile phones are out of scope for v1 (local network usage is desktop-centric).
 
 A user who has just finished processing three old family DVDs should be able to:
 
-1. Open the Review queue and clear 200 items in under 15 minutes using only the keyboard.
+1. Import discs with copy-first: eject as soon as copy finishes; library fills in the background.
 2. Resolve a duplicate group of 8 near-identical photos in under 30 seconds.
-3. Find “photos of the beach trip in 2009” via semantic search in one interaction.
+3. Find “photos of the beach trip in 2009” via search in one interaction.
 4. Feel that the interface is calm, fast, and respectful of their media and time.
 
 ---
 
 **This document is the design source of truth.**  
-Any significant deviation in visual language, interaction model, or HITL flow requires an update to this file.
+Any significant deviation in visual language or core interaction model requires an update to this file.
 
 End of UI / UX Specification.

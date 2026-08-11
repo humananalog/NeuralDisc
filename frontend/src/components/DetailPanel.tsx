@@ -62,7 +62,9 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
   }, [initial.id]);
 
   const src = mediaSrc(item.preview_url || item.thumb_url || item.original_url);
-  const previewSrc = src ? `${src}${src.includes("?") ? "&" : "?"}v=${cacheBust}` : "";
+  const previewSrc = src
+    ? `${src}${src.includes("?") ? "&" : "?"}cb=${cacheBust}`
+    : "";
   const a = item.analysis;
   const isAi = a && !a.human_edited;
   const inTrash = item.lifecycle === "trash";
@@ -86,12 +88,22 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
     setError(null);
     try {
       const res = await api.rotateMedia(item.id, mode);
-      setItem({
+      const stamp = res.media.updated_at || new Date().toISOString();
+      const t = Date.now();
+      const bump = (url?: string | null) => {
+        if (!url) return url ?? null;
+        const base = url.split("?")[0];
+        return `${base}?v=${encodeURIComponent(stamp)}&t=${t}`;
+      };
+      const next = {
         ...res.media,
-        updated_at: res.media.updated_at || new Date().toISOString(),
-      });
-      onUpdated?.(res.media);
-      setCacheBust((n) => n + 1);
+        updated_at: stamp,
+        thumb_url: bump(res.media.thumb_url) ?? res.media.thumb_url,
+        preview_url: bump(res.media.preview_url) ?? res.media.preview_url,
+      };
+      setItem(next);
+      onUpdated?.(next);
+      setCacheBust((n) => n + 1 + t);
       if (!res.changed && mode === "auto") {
         setError("Already upright (EXIF + content check)");
       }
@@ -155,6 +167,7 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
         {previewSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
+            key={previewSrc}
             src={previewSrc}
             alt={item.filename}
             className="h-full w-full object-contain"
@@ -261,7 +274,7 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
           />
           <Row label="File" value={item.file_size ? formatBytes(item.file_size) : "—"} />
           <Row label="Type" value={item.mime_type || item.media_type} />
-          <Row label="HITL" value={item.hitl_status} />
+
           <Row label="Lifecycle" value={item.lifecycle || "library"} />
           <Row
             label="Sharpness"
@@ -303,7 +316,7 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
         {item.is_blurry && (
           <div className="rounded-md border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-2 text-[12px] text-[var(--warning)]">
             Flagged as blurry (Laplacian score {item.blur_score?.toFixed(1) ?? "?"} below
-            threshold). Review and keep or reject.
+            threshold). Flag or trash if you disagree.
           </div>
         )}
 
@@ -376,9 +389,9 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
                     Objects
                   </div>
                   <div className="flex flex-wrap gap-1">
-                    {a.objects.map((o) => (
+                    {uniqueLabels(a.objects).map((o) => (
                       <span
-                        key={o}
+                        key={`obj-${o}`}
                         className="rounded-full border border-[var(--border)] bg-[var(--bg-base)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)]"
                       >
                         {o}
@@ -394,9 +407,9 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
                     Suggested tags
                   </div>
                   <div className="flex flex-wrap gap-1">
-                    {a.suggested_tags.map((t) => (
+                    {uniqueLabels(a.suggested_tags).map((t) => (
                       <span
-                        key={t}
+                        key={`tag-${t}`}
                         className="rounded-full border border-[var(--ai)]/30 bg-[var(--ai)]/10 px-2 py-0.5 text-[10px] text-[var(--ai)]"
                       >
                         {t}
@@ -442,6 +455,21 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
       )}
     </aside>
   );
+}
+
+/** Dedupe case-insensitively while preserving first-seen label (stable React keys). */
+function uniqueLabels(labels: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of labels) {
+    const t = String(raw ?? "").trim();
+    if (!t) continue;
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out;
 }
 
 function IconBtn({

@@ -243,7 +243,7 @@ class Extractor:
                     media_type=ef.media_type,
                     file_size=ef.file_size,
                     sha256=ef.sha256,
-                    hitl_status="pending",
+                    hitl_status="accepted",
                     lifecycle="staging",
                 )
                 session.add(item)

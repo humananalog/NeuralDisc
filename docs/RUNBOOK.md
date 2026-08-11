@@ -96,12 +96,26 @@ Or: `./scripts/dev.sh`
 
 ## Day-to-day workflows
 
-### Import a disc
+### Import a disc (copy-first)
 
-1. Insert disc (or open Import → select volume/folder).  
-2. Prefer **full disc** for optical media.  
-3. Watch the live dock: files appear in Library as they promote.  
-4. Use **Review** for pending HITL; **Duplicates** for keep-best.
+Default pipeline (`import_copy_only=true`, `import_copy_serial=true`):
+
+1. Insert disc (or open Import → select volume/folder). Prefer **full disc** for optical media.  
+2. Copy runs in a **serial queue** (one disc at a time) into `library/staging/…` on the **library SSD**.  
+3. When the panel says **Disc free / eject OK**, the import job is **complete for that disc** — eject and start the next.  
+4. A **global staging processor** classifies and promotes in the background (does not hold the optical drive).  
+5. Library fills as items promote. Use **Inference** to upgrade heuristic captions; **Duplicates** for keep-best.  
+6. AI accepts by default — edit captions / trash in **Library** when you care.
+
+Optional env:
+
+```bash
+export NEURALDISC_IMPORT_COPY_ONLY=true      # default: copy decoupled from process
+export NEURALDISC_IMPORT_COPY_SERIAL=true    # default: one disc at a time
+export NEURALDISC_VLM_ENABLED=true           # local mlx-vlm during process / Inference
+```
+
+`GET /api/import/process/status` — background queue depth and last message.
 
 ### Fix rotation
 
@@ -115,6 +129,19 @@ Or: `./scripts/dev.sh`
 1. **Delete** → Trash by default (restorable; filter **Trash**).  
 2. Permanent: check “Delete permanently” (type `DELETE` if ≥10 items).  
 3. Permanent purge clears FKs, FTS, files, derivatives.
+
+### Inference & MLX
+
+1. Enable VLM in Settings (+ HF token if the model is gated).  
+2. **Inference** page: queue heuristics / pending; **Run** batch or **Re-run** one item.  
+3. After jobs finish, MLX is **released** automatically; or click **Release MLX** for peer apps (`mlx_lm` on :8088, etc.).  
+4. `POST /api/inference/release` if scripting.
+
+### Jobs: cancel, resume, stale
+
+1. **Cancel** — cooperative stop between files.  
+2. **Resume** — interrupted imports: drain staging + re-scan, skip existing SHA-256.  
+3. **Clear stale / Reap orphans** — close `running`/`queued` rows with no live worker (e.g. after API restart). Safe: library media stays.
 
 ### Cancel a job
 

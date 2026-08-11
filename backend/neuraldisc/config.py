@@ -118,11 +118,19 @@ class Settings(BaseSettings):
     volumes_path: Path = Path("/Volumes")
     watch_volumes: bool = False
     auto_eject: bool = False
-    # Parallelism tuned for SSD + optical: more copy workers than process workers
-    import_copy_workers: int = 4
+    # Parallelism: copy is I/O-bound; process (EXIF/VLM) is separate
+    import_copy_workers: int = 6
     import_process_workers: int = 2
     # Keep files in staging until fully processed & classified, then promote
     import_stage_until_classified: bool = True
+    # SOTA pipeline: copy-only to staging (temp) so discs can rotate immediately.
+    # Classification / VLM / promote run on a global background worker and never
+    # block the next disc copy.
+    import_copy_only: bool = True
+    # One disc/source import at a time for optical rotation (queue is serial).
+    import_copy_serial: bool = True
+    # How many staging rows the background processor claims per batch
+    import_process_claim: int = 16
 
     @property
     def library(self) -> Path:

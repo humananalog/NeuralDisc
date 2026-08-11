@@ -282,9 +282,14 @@ export function HitlQueue() {
             )}
             {media.analysis?.suggested_tags && (
               <div className="mt-2 flex flex-wrap gap-1">
-                {media.analysis.suggested_tags.map((t) => (
+                {[...new Map(
+                  media.analysis.suggested_tags
+                    .map((t) => String(t ?? "").trim())
+                    .filter(Boolean)
+                    .map((t) => [t.toLowerCase(), t] as const),
+                ).values()].map((t) => (
                   <span
-                    key={t}
+                    key={`tag-${t}`}
                     className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px]"
                   >
                     {t}

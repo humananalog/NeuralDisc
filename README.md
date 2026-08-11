@@ -2,11 +2,11 @@
 
 **Fully autonomous, local-first photo & video library for Apple Silicon.**
 
-**Current release: [v0.2.0](RELEASE_NOTES.md)** · [Changelog](CHANGELOG.md)
+**Current release: [v0.3.0](RELEASE_NOTES.md)** · [Changelog](CHANGELOG.md)
 
 NeuralDisc transforms decades of personal media locked on physical DVDs and CDs into a modern, searchable, Lightroom-class digital archive — completely offline, privacy-first, and purpose-built for Apple Silicon.
 
-Insert a disc. The system detects the media, extracts every image and video, preserves original metadata and provenance, runs local vision-language analysis, generates high-quality embeddings, detects exact and near-duplicates, and proposes intelligent organisation. You remain in full control through a clean Human-in-the-Loop review interface before any permanent decision is made.
+Insert a disc. The system **copies to staging on your library SSD** (so you can eject and rotate discs quickly), then classifies in the background with quality gates, EXIF, optional local vision-language models, embeddings, and duplicate detection. **AI decisions stand by default** — browse, edit captions, and manage trash in the Library after inference.
 
 ---
 
@@ -58,22 +58,23 @@ Designed for the **Mac Mini M4 (24 GB)** and a local external SSD:
 - Production-grade reliability and resumability  
 - A modern, keyboard-friendly UI (Lightroom / Immich hybrid)
 
-## Core capabilities (v0.2)
+## Core capabilities (v0.3)
 
 | Capability | Description |
 |---|---|
-| **High-throughput import** | Stage → quality → EXIF → blur → derivatives → VLM → promote; live UI as items arrive |
+| **Copy-first import** | Serial disc queue → parallel copy to `library/staging` → **eject when copy done**; classify in background |
+| **Background process** | Global staging processor: EXIF → blur → derivatives → VLM → promote (never blocks next disc copy) |
 | **Target-volume staging** | Temp files only under `library_root` on the library SSD |
 | **Quality gates** | Reject icons, tiny web junk, extreme aspect ratios; optional quarantine |
-| **Blur detection** | Laplacian variance; flag + HITL priority |
+| **Blur detection** | Laplacian variance; flag for later attention in Library |
 | **exiftool-only metadata** | Date, camera, GPS — no Pillow EXIF path |
 | **Auto-rotate** | EXIF bake + content upright; **batch auto-rotate** on multi-select |
-| **Duplicates** | SHA-256 + pHash (+ embedding hooks); keep-best single / batch / all groups |
+| **Duplicates** | SHA-256 + pHash; keep-best single / batch / all groups |
+| **Inference** | Dedicated page: queue heuristics, batch VLM, re-analyse, **Release MLX** for other apps |
+| **Jobs** | Progress, cancel, resume interrupted imports, reap stale workers after restart |
+| **Smart albums** | Auto-organise from EXIF + AI captions/scenes |
 | **Catalogue delete** | Trash (soft) + permanent purge with confirmation; restore |
-| **Job cancel** | Cooperative cancel of running import / processing jobs |
-| **Local VLM** | mlx-vlm (Qwen3-VL class); HF token encrypted at rest |
-| **HITL Review** | Keyboard queue for accept / edit / reject |
-| **Modern Web UI** | Live sidebar counts, filters, detail inference, **lightbox** (double-click / Backspace) |
+| **Modern Web UI** | Live sidebar counts, filters, lightbox, collapsible import dock |
 
 ## Repository layout
 
@@ -93,12 +94,12 @@ RELEASE_NOTES.md      # Human release summary
 
 | Document | Purpose |
 |----------|---------|
-| **[RELEASE_NOTES.md](RELEASE_NOTES.md)** | v0.2.0 release summary |
+| **[RELEASE_NOTES.md](RELEASE_NOTES.md)** | v0.3.0 release summary |
 | **[CHANGELOG.md](CHANGELOG.md)** | Keep-a-Changelog history |
 | **[docs/RUNBOOK.md](docs/RUNBOOK.md)** | Setup, env, quality gates, testing |
 | **[docs/API.md](docs/API.md)** | REST endpoints |
 | **[SPECIFICATION.md](SPECIFICATION.md)** | Architecture, schema, pipeline, phases |
-| **[UI_UX.md](UI_UX.md)** | Visual system, HITL, shortcuts, components |
+| **[UI_UX.md](UI_UX.md)** | Visual system, shortcuts, components |
 
 ## Hardware target
 
@@ -108,19 +109,20 @@ RELEASE_NOTES.md      # Human release summary
 
 ## Project status
 
-**v0.2.0 — Phases 0–4 largely shipped**, with Phase 5 hardening in progress:
+**v0.3.0 — Copy-first pipeline + inference + smart albums**, Phase 5 hardening ongoing:
 
 | Area | Status |
 |------|--------|
-| Ingest + provenance + stage-first promote | Done |
+| Ingest: serial copy → staging; background process/promote | Done |
 | SQLite + FTS5 + WAL | Done |
 | Derivatives, blur, quality, auto-orient | Done |
 | Duplicates + keep-best batch | Done |
-| FastAPI + jobs + cancel | Done |
-| Next.js library, review, duplicates, import, settings | Done |
+| FastAPI + jobs + cancel + resume + stale reap | Done |
+| Next.js library, inference, duplicates, import, settings | Done |
+| AI auto-accept (no HITL queue); edit/trash in Library | Done |
 | Lightbox, live nav counts, trash/permanent delete | Done |
 | Full mlx-vlm on every file by default | Optional (settings) |
-| Face clustering / MapLibre / album auto-org | Planned |
+| Face clustering / MapLibre tiles | Planned |
 
 ## Author
 

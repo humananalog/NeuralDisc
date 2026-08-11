@@ -60,13 +60,19 @@ export default function DuplicatesPage() {
   const activeGroups = useMemo(
     () =>
       groups.filter((g) => {
+        if ((g as { active?: boolean }).active === false) return false;
         const alive = g.members.filter(
-          (m) => (m as { lifecycle?: string }).lifecycle !== "trash",
+          (m) =>
+            (m as { lifecycle?: string }).lifecycle !== "trash" &&
+            (m as { lifecycle?: string }).lifecycle !== "rejected",
         );
         return alive.length >= 2;
       }),
     [groups],
   );
+
+  // Default: only show active groups (matches top counts). Hide ghosts with 0/1 library member.
+  const visibleGroups = activeGroups;
 
   function toggleGroup(id: string) {
     setSelected((prev) => {
@@ -248,9 +254,9 @@ export default function DuplicatesPage() {
               ? ` · ${summary.resolved_groups} resolved`
               : ""}
           </span>
-          {methodBits.map(([method, n]) => (
+          {methodBits.map(([method, n], i) => (
             <span
-              key={method}
+              key={`${method}-${i}`}
               className="rounded-full border border-[var(--border)] px-2 py-0.5 font-mono text-[10px] text-[var(--text-secondary)]"
             >
               {method}: {n}
@@ -272,14 +278,20 @@ export default function DuplicatesPage() {
         </div>
       )}
       {error && <p className="mb-3 text-[12px] text-[var(--danger)]">{error}</p>}
-      {groups.length === 0 && !error && (
-        <p className="text-[var(--text-muted)]">No duplicate groups detected.</p>
+      {visibleGroups.length === 0 && !error && (
+        <p className="text-[var(--text-muted)]">
+          {summary.active_groups === 0
+            ? "No active duplicate groups. Keep-best winners stay in the library; trash copies are hidden here."
+            : "No duplicate groups detected."}
+        </p>
       )}
 
       <div className="space-y-4">
-        {groups.map((g) => {
+        {visibleGroups.map((g) => {
           const alive = g.members.filter(
-            (m) => (m as { lifecycle?: string }).lifecycle !== "trash",
+            (m) =>
+              (m as { lifecycle?: string }).lifecycle !== "trash" &&
+              (m as { lifecycle?: string }).lifecycle !== "rejected",
           );
           const isActive = alive.length >= 2;
           const isSel = selected.has(g.id);
@@ -291,7 +303,6 @@ export default function DuplicatesPage() {
                 isSel
                   ? "border-[var(--accent)] ring-1 ring-[var(--accent)]/30"
                   : "border-[var(--border)]",
-                !isActive && "opacity-60",
               )}
             >
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[12px]">
@@ -332,18 +343,14 @@ export default function DuplicatesPage() {
                 )}
               </div>
               <div className="flex flex-wrap gap-2">
-                {g.members.map((m) => {
-                  const trashed =
-                    (m as { lifecycle?: string }).lifecycle === "trash";
-                  return (
+                {alive.map((m) => (
                     <div
                       key={m.media_id}
                       className={cn(
                         "w-36 rounded border p-2 text-[11px]",
-                        m.best_of_group && !trashed
+                        m.best_of_group
                           ? "border-[var(--success)] ring-1 ring-[var(--success)]/40"
                           : "border-[var(--border)]",
-                        trashed && "opacity-40",
                       )}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -358,15 +365,11 @@ export default function DuplicatesPage() {
                         {m.similarity != null &&
                           ` · ${Math.round(m.similarity * 100)}%`}
                       </div>
-                      {m.best_of_group && !trashed && (
+                      {m.best_of_group && (
                         <div className="mt-0.5 text-[var(--success)]">Best</div>
                       )}
-                      {trashed && (
-                        <div className="mt-0.5 text-[var(--text-muted)]">Trashed</div>
-                      )}
                     </div>
-                  );
-                })}
+                  ))}
               </div>
             </div>
           );

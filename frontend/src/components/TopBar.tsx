@@ -15,7 +15,9 @@ export function TopBar() {
   const setFilter = useAppStore((s) => s.setFilter);
   const clearFilters = useAppStore((s) => s.clearFilters);
   const setJobsOpen = useAppStore((s) => s.setJobsOpen);
-  const setImportOpen = useAppStore((s) => s.setImportOpen);
+  const expandImport = useAppStore((s) => s.expandImport);
+  const importMinimized = useAppStore((s) => s.importMinimized);
+  const importOpen = useAppStore((s) => s.importOpen);
   const liveImports = useAppStore((s) => s.liveImports);
   const importActive = liveImports.some(
     (j) =>
@@ -63,7 +65,6 @@ export function TopBar() {
 
   const hasFilters =
     !!filters.media_type ||
-    !!filters.hitl_status ||
     filters.is_duplicate !== undefined ||
     filters.is_blurry !== undefined ||
     filters.trash === true;
@@ -96,17 +97,6 @@ export function TopBar() {
           }
         >
           Video
-        </FilterChip>
-        <FilterChip
-          active={filters.hitl_status === "pending"}
-          onClick={() =>
-            setFilter(
-              "hitl_status",
-              filters.hitl_status === "pending" ? undefined : "pending",
-            )
-          }
-        >
-          Pending
         </FilterChip>
         <FilterChip
           active={filters.is_duplicate === true}
@@ -164,12 +154,33 @@ export function TopBar() {
 
       <button
         type="button"
-        onClick={() => setImportOpen(true)}
-        className="inline-flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-2.5 py-1.5 text-[12px] font-medium text-white hover:bg-[var(--accent-hover)]"
+        onClick={() => expandImport()}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] font-medium text-white",
+          importMinimized || importOpen
+            ? "bg-[var(--accent)] ring-2 ring-[var(--accent)]/40 hover:bg-[var(--accent-hover)]"
+            : "bg-[var(--accent)] hover:bg-[var(--accent-hover)]",
+        )}
+        title={
+          importMinimized
+            ? "Expand import dialog"
+            : importOpen
+              ? "Import dialog is open"
+              : "Import media"
+        }
       >
         <HardDriveDownload className="h-3.5 w-3.5" strokeWidth={1.75} />
-        Import
+        {importMinimized ? "Import · expand" : "Import"}
       </button>
+      {importMinimized && !importActive && (
+        <button
+          type="button"
+          onClick={() => expandImport()}
+          className="hidden items-center gap-1.5 rounded-full border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-[11px] text-[var(--accent)] hover:bg-[var(--accent)]/20 sm:inline-flex"
+        >
+          Import docked · click to open
+        </button>
+      )}
       {importActive && (
         <span className="hidden items-center gap-1.5 rounded-full border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-[11px] text-[var(--accent)] sm:inline-flex">
           <Loader2 className="h-3 w-3 animate-spin" />
