@@ -32,15 +32,12 @@ It is designed from the ground up for the Mac Mini M4 (24 GB) and a local extern
 | **HITL Review** | Dedicated queue for approving/editing AI tags, merging duplicates, and final keep/delete decisions |
 | **Modern Web UI** | Timeline, Grid, Map, Albums, Search, and powerful filtering — all local |
 
-## Architecture Snapshot
+## Architecture & Design Documents
 
-- **Backend**: Python · FastAPI · background workers (RQ/Redis or asyncio)
-- **Database**: SQLite + FTS5 · LanceDB (vector store)
-- **AI Runtime**: mlx-vlm + MLX-compatible embedding models
-- **Frontend**: Next.js (App Router) · TypeScript · Tailwind · shadcn/ui
-- **Media**: ffmpeg · exiftool · Pillow · OpenCV · imagehash
-
-Full design, data model, folder layout, schema, and phased implementation plan are documented in **[SPECIFICATION.md](SPECIFICATION.md)**.
+| Document | Purpose |
+|----------|---------|
+| **[SPECIFICATION.md](SPECIFICATION.md)** | Full system architecture, data model, technology choices, folder layout, database schema, processing pipeline, and phased implementation plan |
+| **[UI_UX.md](UI_UX.md)** | SOTA UI/UX specification — design philosophy, visual system, information architecture, HITL interaction model, keyboard shortcuts, performance targets, and component strategy |
 
 ## Hardware Target
 
@@ -50,10 +47,8 @@ Full design, data model, folder layout, schema, and phased implementation plan a
 
 ## Project Status
 
-Architecture and specification phase complete.  
+Architecture, system specification, and SOTA UI/UX design complete.  
 Implementation begins with **Phase 0** (project skeleton + robust disc ingestion).
-
-See the [Specification](SPECIFICATION.md) for the detailed roadmap (Phases 0–5).
 
 ## Author
 
