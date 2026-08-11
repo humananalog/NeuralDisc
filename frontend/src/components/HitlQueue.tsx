@@ -101,8 +101,33 @@ export function HitlQueue() {
         case "3":
         case "4":
         case "5":
+        case "0":
           e.preventDefault();
           if (media) void api.updateMedia(media.id, { rating: Number(e.key) });
+          break;
+        case "[":
+          e.preventDefault();
+          if (media?.media_type === "image") {
+            void api.rotateMedia(media.id, e.shiftKey ? "auto" : "ccw").then((res) => {
+              setQueue((q) =>
+                q.map((x) =>
+                  x.media?.id === media.id ? { ...x, media: res.media } : x,
+                ),
+              );
+            });
+          }
+          break;
+        case "]":
+          e.preventDefault();
+          if (media?.media_type === "image") {
+            void api.rotateMedia(media.id, e.shiftKey ? "180" : "cw").then((res) => {
+              setQueue((q) =>
+                q.map((x) =>
+                  x.media?.id === media.id ? { ...x, media: res.media } : x,
+                ),
+              );
+            });
+          }
           break;
         case " ":
           e.preventDefault();
@@ -306,8 +331,10 @@ export function HitlQueue() {
               <span>a</span><span>accept</span>
               <span>e</span><span>edit</span>
               <span>r</span><span>reject</span>
-              <span>1–5</span><span>rate</span>
-              <span>f</span><span>flag</span>
+              <span>0–5</span><span>rate</span>
+              <span>f/p/u</span><span>flag</span>
+              <span>[ ]</span><span>rotate</span>
+              <span>?</span><span>help</span>
             </div>
           </div>
         </div>

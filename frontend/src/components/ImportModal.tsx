@@ -387,6 +387,7 @@ export function ImportModal() {
       <div
         role="dialog"
         aria-modal="true"
+        data-blocking-shortcuts="true"
         aria-labelledby="import-title"
         className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}

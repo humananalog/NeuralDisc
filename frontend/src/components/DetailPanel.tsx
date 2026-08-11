@@ -190,6 +190,7 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
             key={n}
             disabled={busy || inTrash}
             onClick={() => patch({ rating: item.rating === n ? 0 : n })}
+            title={`Rate ${n}★ (${n}) · 0 clears`}
             className="text-amber-400/80 hover:text-amber-300 disabled:opacity-40"
           >
             <Star
@@ -205,7 +206,7 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
             "rounded p-1",
             item.flag ? "text-[var(--danger)]" : "text-[var(--text-muted)]",
           )}
-          title="Flag"
+          title={item.flag ? "Unflag (u)" : "Flag / pick (f · p)"}
         >
           <Flag className={cn("h-4 w-4", item.flag && "fill-current")} />
         </button>
@@ -215,16 +216,16 @@ export function DetailPanel({ item: initial, onClose, onUpdated, onDeleted }: Pr
         {item.media_type === "image" && !inTrash && (
           <>
             <IconBtn
-              title="Auto-rotate (EXIF + content)"
+              title="Auto-rotate (⇧[)"
               disabled={busy}
               onClick={() => rotate("auto")}
             >
               <RefreshCw className="h-3.5 w-3.5" />
             </IconBtn>
-            <IconBtn title="Rotate 90° left" disabled={busy} onClick={() => rotate("ccw")}>
+            <IconBtn title="Rotate 90° left ([)" disabled={busy} onClick={() => rotate("ccw")}>
               <RotateCcw className="h-3.5 w-3.5" />
             </IconBtn>
-            <IconBtn title="Rotate 90° right" disabled={busy} onClick={() => rotate("cw")}>
+            <IconBtn title="Rotate 90° right (])" disabled={busy} onClick={() => rotate("cw")}>
               <RotateCw className="h-3.5 w-3.5" />
             </IconBtn>
           </>

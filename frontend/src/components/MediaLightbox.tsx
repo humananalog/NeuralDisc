@@ -77,31 +77,19 @@ export function MediaLightbox({ item, items, onClose, onNavigate }: Props) {
       ) {
         return;
       }
-      if (e.key === "Escape" || e.key === "Backspace") {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        goPrev();
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        goNext();
-      } else if (e.key === "+" || e.key === "=") {
+      // Navigation / close / rate / rotate are owned by useMediaShortcuts (parent).
+      // Lightbox only handles zoom so keys stay consistent app-wide.
+      if (e.key === "+" || e.key === "=") {
         e.preventDefault();
         setZoom((z) => Math.min(4, z + 0.25));
       } else if (e.key === "-" || e.key === "_") {
         e.preventDefault();
         setZoom((z) => Math.max(0.5, z - 0.25));
-      } else if (e.key === "0") {
-        e.preventDefault();
-        setZoom(1);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, goPrev, goNext]);
+  }, []);
 
   // Prevent body scroll while open
   useEffect(() => {
@@ -229,7 +217,7 @@ export function MediaLightbox({ item, items, onClose, onNavigate }: Props) {
       </div>
 
       <div className="shrink-0 border-t border-white/10 px-4 py-1.5 text-center text-[10px] text-white/40">
-        Esc / Backspace close · ← → navigate · double-click zoom · +/− zoom
+        Esc / Backspace close · ← → or j/k · 1–5 rate · [ ] rotate · f flag · +/− zoom · ? help
       </div>
     </div>
   );

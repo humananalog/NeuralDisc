@@ -1,3 +1,3 @@
 """NeuralDisc — local-first photo & video library for Apple Silicon."""
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"

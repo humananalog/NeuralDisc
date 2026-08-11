@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Trash2, Sparkles, RefreshCw, RotateCw, RotateCcw } from "lucide-react";
 import { api, type MediaItem } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { useMediaShortcuts, type RotateMode } from "@/hooks/useMediaShortcuts";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { DetailPanel } from "./DetailPanel";
 import { DeleteConfirmModal } from "./DeleteConfirmModal";
 import { MediaLightbox } from "./MediaLightbox";
+import { ShortcutsHelp } from "./ShortcutsHelp";
 
 const SIZE_MAP = { small: 96, medium: 144, large: 208 };
 
@@ -18,6 +20,7 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
   const selectedIds = useAppStore((s) => s.selectedIds);
   const select = useAppStore((s) => s.select);
   const clearSelection = useAppStore((s) => s.clearSelection);
+  const selectAll = useAppStore((s) => s.selectAll);
   const setDetailOpen = useAppStore((s) => s.setDetailOpen);
   const detailOpen = useAppStore((s) => s.detailOpen);
   const activeId = useAppStore((s) => s.activeId);
@@ -66,11 +69,13 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
   const [thumbEpoch, setThumbEpoch] = useState<Record<string, number>>({});
   /** Expanded in-app viewer (double-click / Backspace) */
   const [lightboxId, setLightboxId] = useState<string | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const knownIds = useRef<Set<string>>(new Set());
   const firstLoad = useRef(true);
 
   const size = SIZE_MAP[density];
   const orderedIds = useMemo(() => items.map((i) => i.id), [items]);
+  const itemsById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
 
   const load = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -167,32 +172,115 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
     setLightboxId(null);
   }, []);
 
-  // Backspace expands active/selected image (when not typing in an input)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Backspace") return;
-      const t = e.target as HTMLElement | null;
-      if (
-        t &&
-        (t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable)
-      ) {
+  function applyRotatedMedia(updated: MediaItem[]) {
+    const now = Date.now();
+    const byId = new Map(updated.map((m) => [m.id, m]));
+    setThumbEpoch((prev) => {
+      const next = { ...prev };
+      for (const m of updated) next[m.id] = (next[m.id] || 0) + 1 + (now % 1000);
+      return next;
+    });
+    setItems((prev) =>
+      prev.map((x) => {
+        const u = byId.get(x.id);
+        if (!u) return x;
+        const stamp = u.updated_at || new Date().toISOString();
+        const bump = (url?: string | null) => {
+          if (!url) return url;
+          const base = url.split("?")[0];
+          return `${base}?v=${encodeURIComponent(stamp)}&t=${now}`;
+        };
+        return {
+          ...u,
+          updated_at: stamp,
+          thumb_url: bump(u.thumb_url) ?? u.thumb_url,
+          preview_url: bump(u.preview_url) ?? u.preview_url,
+        };
+      }),
+    );
+  }
+
+  const patchItems = useCallback((updated: MediaItem[]) => {
+    const byId = new Map(updated.map((m) => [m.id, m]));
+    setItems((prev) => prev.map((x) => byId.get(x.id) ?? x));
+  }, []);
+
+  const handleBatchRotate = useCallback(
+    async (mode: RotateMode = "auto", idsOverride?: string[]) => {
+      const sourceIds = idsOverride ?? selectedItems.map((i) => i.id);
+      const ids = sourceIds.filter((id) => {
+        const m = itemsById.get(id);
+        return !m || m.media_type === "image";
+      });
+      if (!ids.length) {
+        setError("Select one or more images to rotate");
         return;
       }
-      // Lightbox handles its own Backspace to close
-      if (lightboxId) return;
+      setRotateBusy(true);
+      setRotateMsg(null);
+      setError(null);
+      try {
+        const res = await api.batchRotateMedia(ids, mode, true);
+        applyRotatedMedia(res.items);
+        bumpLibrary();
+        const failHint =
+          res.count_failed > 0 ? ` · ${res.count_failed} failed` : "";
+        setRotateMsg(
+          mode === "auto"
+            ? `Auto-rotate: fixed ${res.count_rotated}, already upright ${res.count_unchanged}${failHint}`
+            : `Rotated ${res.count_rotated} image${res.count_rotated === 1 ? "" : "s"}${failHint}`,
+        );
+        window.setTimeout(() => void load({ silent: true }), 400);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Batch rotate failed");
+      } finally {
+        setRotateBusy(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedItems, itemsById, bumpLibrary, load],
+  );
 
-      e.preventDefault();
-      const id = activeId || (selectedIds.size === 1 ? [...selectedIds][0] : null);
-      if (id) openLightbox(id);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [activeId, selectedIds, lightboxId, openLightbox]);
+  useMediaShortcuts({
+    enabled: !batchDeleteOpen && !shortcutsOpen,
+    orderedIds,
+    itemsById,
+    lightboxOpen: Boolean(lightboxId),
+    detailOpen,
+    getTargetIds: () => {
+      if (lightboxId) return [lightboxId];
+      if (selectedIds.size > 0) return [...selectedIds];
+      if (activeId) return [activeId];
+      return [];
+    },
+    onItemsPatched: patchItems,
+    onRotate: (ids, mode) => void handleBatchRotate(mode, ids),
+    onRequestDelete: () => {
+      if (selectedIds.size === 0 && (lightboxId || activeId)) {
+        const id = lightboxId || activeId;
+        if (id) select(id);
+      }
+      setBatchDeleteOpen(true);
+    },
+    onSelectId: (id) => select(id),
+    onOpenDetail: () => setDetailOpen(true),
+    onCloseDetail: () => setDetailOpen(false),
+    onOpenLightbox: openLightbox,
+    onCloseLightbox: closeLightbox,
+    onClearSelection: clearSelection,
+    onSelectAll: () => selectAll(items),
+    onToggleHelp: () => setShortcutsOpen((v) => !v),
+  });
 
   async function handleBatchDelete(permanent: boolean) {
-    const ids = [...selectedIds];
+    const ids =
+      selectedIds.size > 0
+        ? [...selectedIds]
+        : lightboxId
+          ? [lightboxId]
+          : activeId
+            ? [activeId]
+            : [];
     if (!ids.length) return;
     setBatchBusy(true);
     setError(null);
@@ -203,23 +291,19 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
       setTotal((t) => Math.max(0, t - removed.size));
       clearSelection();
       setDetailOpen(false);
+      closeLightbox();
       bumpLibrary();
       setBatchDeleteOpen(false);
       void load({ silent: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Batch delete failed";
       setError(msg);
-      // Re-throw so DeleteConfirmModal can show the error and re-enable Cancel
       throw e instanceof Error ? e : new Error(msg);
     } finally {
       setBatchBusy(false);
     }
   }
 
-  /** Keep best image(s) across the entire multi-select batch.
-   *  Clusters by duplicate group; ad-hoc selection (≥2) also resolved.
-   *  Losers go to Trash (soft-delete).
-   */
   async function handleKeepBestBatch() {
     const ids = [...selectedIds];
     if (ids.length < 2) {
@@ -238,9 +322,7 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
       const kept = new Set(res.kept);
       setItems((prev) => prev.filter((x) => !trashed.has(x.id)));
       setTotal((t) => Math.max(0, t - res.trashed_count));
-      // Leave winners selected for review
       if (kept.size) {
-        // re-select only kept
         clearSelection();
         for (const id of kept) {
           select(id, true, false, [...kept]);
@@ -255,7 +337,6 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
           res.trashed_count === 1 ? "" : "s"
         }${res.groups_resolved ? ` · ${res.groups_resolved} group(s)` : ""}`,
       );
-      // Silent refresh to pick up best_of_group / hitl changes
       void load({ silent: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Keep best failed");
@@ -265,71 +346,14 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
   }
 
   const canKeepBest = selectedIds.size >= 2;
-
-  function applyRotatedMedia(updated: MediaItem[]) {
-    const now = Date.now();
-    const byId = new Map(updated.map((m) => [m.id, m]));
-    setThumbEpoch((prev) => {
-      const next = { ...prev };
-      for (const m of updated) next[m.id] = (next[m.id] || 0) + 1 + (now % 1000);
-      return next;
-    });
-    setItems((prev) =>
-      prev.map((x) => {
-        const u = byId.get(x.id);
-        if (!u) return x;
-        const stamp = u.updated_at || new Date().toISOString();
-        // Ensure thumb/preview URLs carry a fresh client token even if server v= lags
-        const bump = (url?: string | null) => {
-          if (!url) return url;
-          const base = url.split("?")[0];
-          return `${base}?v=${encodeURIComponent(stamp)}&t=${now}`;
-        };
-        return {
-          ...u,
-          updated_at: stamp,
-          thumb_url: bump(u.thumb_url) ?? u.thumb_url,
-          preview_url: bump(u.preview_url) ?? u.preview_url,
-        };
-      }),
-    );
-  }
-
-  /** Batch auto-rotate (aggressive content + EXIF) or manual 90° for selection. */
-  async function handleBatchRotate(mode: "auto" | "cw" | "ccw" | "180" = "auto") {
-    const ids = selectedItems
-      .filter((i) => i.media_type === "image")
-      .map((i) => i.id);
-    if (!ids.length) {
-      setError("Select one or more images to rotate");
-      return;
-    }
-    setRotateBusy(true);
-    setRotateMsg(null);
-    setError(null);
-    try {
-      const res = await api.batchRotateMedia(ids, mode, true);
-      applyRotatedMedia(res.items);
-      bumpLibrary();
-      const failHint =
-        res.count_failed > 0 ? ` · ${res.count_failed} failed` : "";
-      setRotateMsg(
-        mode === "auto"
-          ? `Auto-rotate: fixed ${res.count_rotated}, already upright ${res.count_unchanged}${failHint}`
-          : `Rotated ${res.count_rotated} image${res.count_rotated === 1 ? "" : "s"}${failHint}`,
-      );
-      // Delayed silent refresh so new derivatives/URLs from server win without
-      // immediately clobbering the optimistic thumb bust.
-      window.setTimeout(() => void load({ silent: true }), 400);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Batch rotate failed");
-    } finally {
-      setRotateBusy(false);
-    }
-  }
-
   const selectedImageCount = selectedItems.filter((i) => i.media_type === "image").length;
   const anyBusy = batchBusy || keepBestBusy || rotateBusy;
+  const deleteCount =
+    selectedIds.size > 0
+      ? selectedIds.size
+      : lightboxId || activeId
+        ? 1
+        : 0;
 
   return (
     <div className="flex h-full min-h-0 flex-1">
@@ -360,6 +384,14 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
                 +{newCount} new
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setShortcutsOpen(true)}
+              className="rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text-secondary)]"
+              title="Keyboard shortcuts (?)"
+            >
+              ?
+            </button>
           </span>
           {selectedIds.size > 0 && (
             <div className="flex flex-wrap items-center gap-2">
@@ -373,7 +405,7 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
                 type="button"
                 disabled={selectedImageCount < 1 || anyBusy}
                 onClick={() => void handleBatchRotate("auto")}
-                title="Auto-rotate selected images (EXIF + content upright detection)"
+                title="Auto-rotate selected (⇧[)"
                 className="inline-flex items-center gap-1 rounded-md border border-[var(--accent)]/40 px-2 py-1 text-[11px] text-[var(--accent)] hover:bg-[var(--accent)]/10 disabled:opacity-40"
               >
                 <RefreshCw className={cnSpin(rotateBusy && "animate-spin", "h-3 w-3")} />
@@ -383,7 +415,7 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
                 type="button"
                 disabled={selectedImageCount < 1 || anyBusy}
                 onClick={() => void handleBatchRotate("ccw")}
-                title="Rotate 90° left"
+                title="Rotate 90° left ([)"
                 className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] px-1.5 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40"
               >
                 <RotateCcw className="h-3 w-3" />
@@ -392,7 +424,7 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
                 type="button"
                 disabled={selectedImageCount < 1 || anyBusy}
                 onClick={() => void handleBatchRotate("cw")}
-                title="Rotate 90° right"
+                title="Rotate 90° right (])"
                 className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] px-1.5 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40"
               >
                 <RotateCw className="h-3 w-3" />
@@ -415,6 +447,7 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
                 type="button"
                 disabled={anyBusy}
                 onClick={() => setBatchDeleteOpen(true)}
+                title="Delete (Del)"
                 className="inline-flex items-center gap-1 rounded-md border border-[var(--danger)]/40 px-2 py-1 text-[11px] text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-40"
               >
                 <Trash2 className="h-3 w-3" />
@@ -486,8 +519,6 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
                   const multi = e.metaKey || e.ctrlKey;
                   const range = e.shiftKey;
                   select(item.id, multi, range, orderedIds);
-                  // Single-click opens right detail panel (catalogue pattern).
-                  // Multi/range selection keeps panel closed so bulk work stays focused.
                   if (!multi && !range) {
                     setDetailOpen(true);
                   }
@@ -528,16 +559,25 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
         />
       )}
 
-      {batchDeleteOpen && (
+      {batchDeleteOpen && deleteCount > 0 && (
         <DeleteConfirmModal
-          count={selectedIds.size}
-          filenames={selectedItems.map((i) => i.filename)}
+          count={deleteCount}
+          filenames={
+            selectedItems.length
+              ? selectedItems.map((i) => i.filename)
+              : [
+                  items.find((i) => i.id === (lightboxId || activeId))?.filename ||
+                    "1 item",
+                ]
+          }
           permanentDefault={filters.trash === true}
           busy={batchBusy}
           onCancel={() => setBatchDeleteOpen(false)}
           onConfirm={handleBatchDelete}
         />
       )}
+
+      <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
 }

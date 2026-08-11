@@ -70,6 +70,7 @@ export function DeleteConfirmModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="delete-title"
+      data-blocking-shortcuts="true"
       onClick={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}

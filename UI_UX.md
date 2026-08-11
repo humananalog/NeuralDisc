@@ -152,20 +152,27 @@ This is the primary work surface after a disc is processed.
 - Right: AI analysis panel + action buttons
 - Bottom: filmstrip of current queue page
 
-**Actions (keyboard-first)**
+**Actions (keyboard-first — Library grid & lightbox)**
+
+Same Lightroom-style map everywhere media is selected (`?` shows the cheat sheet):
+
 | Key | Action |
 |-----|--------|
-| `j` / `↓` | Next item |
-| `k` / `↑` | Previous item |
-| `a` | Accept AI tags & caption |
-| `e` | Edit tags / caption (inline) |
-| `r` | Reject / mark for deletion |
-| `d` | Open duplicate group if present |
-| `f` | Flag |
-| `1–5` | Star rating |
-| `Space` | Toggle selection / advance |
-| `Enter` | Open full detail |
-| `Esc` | Exit review / clear selection |
+| `←` `→` / `j` `k` | Previous / next |
+| `Enter` | Open detail panel |
+| `Backspace` | Expand / close lightbox |
+| `Esc` | Close overlay · clear selection |
+| `⌘A` | Select all in view |
+| `0`–`5` | Star rating (`0` clears) |
+| `f` / `p` | Toggle / set pick flag |
+| `u` | Unflag |
+| `[` / `]` | Rotate 90° left / right |
+| `⇧[` / `⇧]` | Auto-rotate / rotate 180° |
+| `Delete` | Trash selection |
+| `+` `−` | Zoom (lightbox) |
+| `?` | Shortcuts help |
+
+**Legacy HITL review map** (if queue re-enabled): `a` accept · `e` edit · `r` reject · same rating/flag keys.
 
 **Visual language**
 - AI-generated fields have a subtle purple left border or “AI” badge

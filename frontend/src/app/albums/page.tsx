@@ -17,6 +17,9 @@ import {
 import { api, type Album, type MediaItem } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
+import { useMediaShortcuts } from "@/hooks/useMediaShortcuts";
+import { MediaLightbox } from "@/components/MediaLightbox";
+import { ShortcutsHelp } from "@/components/ShortcutsHelp";
 
 type FilterTab = "all" | "album" | "smart";
 
@@ -29,6 +32,9 @@ export default function AlbumsPage() {
   const [active, setActive] = useState<Album | null>(null);
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [mediaLoading, setMediaLoading] = useState(false);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [lightboxId, setLightboxId] = useState<string | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const setNavCounts = useAppStore((s) => s.setNavCounts);
   const bumpLibrary = useAppStore((s) => s.bumpLibrary);
 
@@ -59,7 +65,9 @@ export default function AlbumsPage() {
   const stats = useMemo(() => {
     const smart = albums.filter((a) => a.kind === "smart").length;
     const fixed = albums.length - smart;
-    const auto = albums.filter((a) => a.is_ai_proposed || (a.source || "").startsWith("auto")).length;
+    const auto = albums.filter(
+      (a) => a.is_ai_proposed || (a.source || "").startsWith("auto"),
+    ).length;
     return { smart, fixed, auto, total: albums.length };
   }, [albums]);
 
@@ -91,6 +99,8 @@ export default function AlbumsPage() {
     setActive(a);
     setMediaLoading(true);
     setMedia([]);
+    setFocusId(null);
+    setLightboxId(null);
     try {
       const data = await api.albumMedia(a.id, 120);
       setMedia(data.items);
@@ -110,33 +120,87 @@ export default function AlbumsPage() {
         setActive(null);
         setMedia([]);
       }
-      await load();
+      setAlbums((prev) => prev.filter((x) => x.id !== a.id));
+      bumpLibrary();
+      try {
+        setNavCounts(await api.navCounts());
+      } catch {
+        /* */
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed");
     }
   }
 
+  const orderedIds = useMemo(() => media.map((m) => m.id), [media]);
+  const itemsById = useMemo(() => new Map(media.map((m) => [m.id, m])), [media]);
+  const lightboxItem = lightboxId
+    ? media.find((m) => m.id === lightboxId) || null
+    : null;
+
+  useMediaShortcuts({
+    enabled: Boolean(active) && media.length > 0 && !shortcutsOpen,
+    orderedIds,
+    itemsById,
+    lightboxOpen: Boolean(lightboxId),
+    detailOpen: false,
+    getTargetIds: () => {
+      if (lightboxId) return [lightboxId];
+      if (focusId) return [focusId];
+      return [];
+    },
+    onItemsPatched: (updated) => {
+      const byId = new Map(updated.map((m) => [m.id, m]));
+      setMedia((prev) => prev.map((x) => byId.get(x.id) ?? x));
+    },
+    onRotate: async (ids, mode) => {
+      try {
+        const res = await api.batchRotateMedia(ids, mode, true);
+        const byId = new Map(res.items.map((m) => [m.id, m]));
+        setMedia((prev) => prev.map((x) => byId.get(x.id) ?? x));
+        bumpLibrary();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Rotate failed");
+      }
+    },
+    onSelectId: (id) => setFocusId(id),
+    onOpenLightbox: (id) => {
+      setFocusId(id);
+      setLightboxId(id);
+    },
+    onCloseLightbox: () => setLightboxId(null),
+    onClearSelection: () => setFocusId(null),
+    onToggleHelp: () => setShortcutsOpen((v) => !v),
+  });
+
   function sourceIcon(a: Album) {
-    const s = a.source || "";
-    if (s.includes("camera")) return <Camera className="h-3 w-3" />;
-    if (s.includes("year") || s.includes("month") || s.includes("event"))
-      return <Calendar className="h-3 w-3" />;
-    if (s.includes("scene") || s.includes("tag")) return <Tag className="h-3 w-3" />;
-    if (s.includes("people")) return <Users className="h-3 w-3" />;
-    if (s.includes("disc")) return <Disc3 className="h-3 w-3" />;
-    if (s.includes("gps") || a.name.toLowerCase().includes("map"))
-      return <MapPin className="h-3 w-3" />;
-    if (a.kind === "smart") return <Layers className="h-3 w-3" />;
-    return <Sparkles className="h-3 w-3" />;
+    const s = (a.source || "").toLowerCase();
+    if (s.includes("camera")) return <Camera className="h-2.5 w-2.5" />;
+    if (s.includes("year") || s.includes("month") || s.includes("date"))
+      return <Calendar className="h-2.5 w-2.5" />;
+    if (s.includes("place") || s.includes("geo") || s.includes("gps"))
+      return <MapPin className="h-2.5 w-2.5" />;
+    if (s.includes("tag") || s.includes("scene")) return <Tag className="h-2.5 w-2.5" />;
+    if (s.includes("people") || s.includes("person")) return <Users className="h-2.5 w-2.5" />;
+    if (s.includes("disc")) return <Disc3 className="h-2.5 w-2.5" />;
+    return <Layers className="h-2.5 w-2.5" />;
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
         <div>
-          <h1 className="text-[16px] font-semibold">Albums & collections</h1>
-          <p className="mt-0.5 text-[12px] text-[var(--text-muted)]">
-            {stats.total} total · {stats.fixed} albums · {stats.smart} smart · {stats.auto} auto-named
+          <h1 className="text-[16px] font-semibold">Collections</h1>
+          <p className="text-[12px] text-[var(--text-muted)]">
+            {stats.total} total · {stats.fixed} albums · {stats.smart} smart · {stats.auto} auto
+            {" · "}
+            <button
+              type="button"
+              onClick={() => setShortcutsOpen(true)}
+              className="font-mono text-[var(--text-secondary)] hover:underline"
+            >
+              ?
+            </button>
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -167,11 +231,19 @@ export default function AlbumsPage() {
             type="button"
             disabled={busy}
             onClick={() => void runAutoOrganise()}
-            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-[12px] font-medium text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
-            title="Build albums from EXIF (year, camera, disc) and AI inference (scene, tags, people, events)"
+            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--ai)] px-3 py-1.5 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40"
           >
-            <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
+            <Sparkles className={cn("h-3.5 w-3.5", busy && "animate-pulse")} />
             {busy ? "Organising…" : "Auto-organise"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void load()}
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+          >
+            <RefreshCw className={cn("h-3 w-3", busy && "animate-spin")} />
+            Refresh
           </button>
         </div>
       </div>
@@ -292,6 +364,8 @@ export default function AlbumsPage() {
                   {active.source ? ` · ${active.source}` : ""}
                   {" · "}
                   {mediaLoading ? "…" : `${media.length} shown`}
+                  {" · "}
+                  <span className="text-[var(--text-secondary)]">1–5 · [ ] · f</span>
                 </div>
               </div>
               <button
@@ -299,6 +373,8 @@ export default function AlbumsPage() {
                 onClick={() => {
                   setActive(null);
                   setMedia([]);
+                  setFocusId(null);
+                  setLightboxId(null);
                 }}
                 className="rounded p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
                 aria-label="Close"
@@ -324,10 +400,21 @@ export default function AlbumsPage() {
               ) : (
                 <div className="grid grid-cols-3 gap-1.5">
                   {media.map((m) => (
-                    <div
+                    <button
                       key={m.id}
-                      className="overflow-hidden rounded border border-[var(--border)] bg-[var(--bg-base)]"
-                      title={m.filename}
+                      type="button"
+                      onClick={() => setFocusId(m.id)}
+                      onDoubleClick={() => {
+                        setFocusId(m.id);
+                        setLightboxId(m.id);
+                      }}
+                      className={cn(
+                        "overflow-hidden rounded border bg-[var(--bg-base)] text-left",
+                        focusId === m.id
+                          ? "border-[var(--accent)] ring-1 ring-[var(--accent)]/40"
+                          : "border-[var(--border)]",
+                      )}
+                      title={`${m.filename} · ${m.rating}★`}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
@@ -335,7 +422,7 @@ export default function AlbumsPage() {
                         alt={m.filename}
                         className="aspect-square w-full object-cover"
                       />
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -343,6 +430,19 @@ export default function AlbumsPage() {
           </aside>
         )}
       </div>
+
+      {lightboxItem && (
+        <MediaLightbox
+          item={lightboxItem}
+          items={media}
+          onClose={() => setLightboxId(null)}
+          onNavigate={(id) => {
+            setFocusId(id);
+            setLightboxId(id);
+          }}
+        />
+      )}
+      <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
 }
