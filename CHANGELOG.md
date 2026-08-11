@@ -5,6 +5,12 @@ All notable changes to NeuralDisc are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.5] — 2026-08-11
+
+### Fixed
+- Import cancel stuck on "Cancelling…": honor cancel during scan, interrupt in-flight copies between chunks, skip cancelled jobs waiting in the serial queue, and **Force cancel** (second click / `?force=true`) for stale limbo
+- Do not auto-resume imports that were mid-cancel across API restart
+
 ## [0.3.4] — 2026-08-11
 
 ### Fixed
@@ -123,6 +129,7 @@ First full application release: local library backend, Next.js UI, high-throughp
 
 ---
 
+[0.3.5]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.5
 [0.3.4]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.4
 [0.3.3]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.3
 [0.3.2]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.2

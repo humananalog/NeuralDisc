@@ -227,10 +227,18 @@ def resume_job(job_id: str, db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/{job_id}/cancel")
-def cancel_job(job_id: str, db: Session = Depends(get_db)) -> dict:
+def cancel_job(
+    job_id: str,
+    force: bool = Query(
+        False,
+        description="Force-close immediately (second click / stuck Cancelling…)",
+    ),
+    db: Session = Depends(get_db),
+) -> dict:
     """Request cooperative cancellation of a running/queued job.
 
     If no live worker exists (stale after restart), the job is closed immediately.
+    Pass ``force=true`` (or cancel twice) to finalize a stuck Cancelling… import.
     """
     job = db.get(Job, job_id)
     if not job:
@@ -238,7 +246,7 @@ def cancel_job(job_id: str, db: Session = Depends(get_db)) -> dict:
     if job.status in TERMINAL:
         raise HTTPException(400, f"Job already {job.status}")
 
-    result = request_cancel(job_id)
+    result = request_cancel(job_id, force=force)
     if not result.get("ok"):
         raise HTTPException(400, result.get("error") or "Cannot cancel job")
     db.expire_all()

@@ -43,11 +43,11 @@ export default function JobsPage() {
     [jobs],
   );
 
-  async function cancel(jobId: string) {
+  async function cancel(jobId: string, force = false) {
     setError(null);
     setCancelling((s) => new Set(s).add(jobId));
     try {
-      await api.cancelJob(jobId);
+      await api.cancelJob(jobId, { force });
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cancel failed");
@@ -196,11 +196,23 @@ export default function JobsPage() {
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => void cancel(j.id)}
+                      onClick={() =>
+                        void cancel(
+                          j.id,
+                          stale ||
+                            (j.message || "").toLowerCase().includes("cancel"),
+                        )
+                      }
                       className="inline-flex items-center gap-1 rounded-md border border-[var(--danger)]/40 px-2 py-1 text-[11px] text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-40"
                     >
                       <Square className="h-3 w-3 fill-current" />
-                      {busy ? "…" : stale ? "Close" : "Cancel"}
+                      {busy
+                        ? "…"
+                        : stale
+                          ? "Close"
+                          : (j.message || "").toLowerCase().includes("cancel")
+                            ? "Force cancel"
+                            : "Cancel"}
                     </button>
                   )}
                 </div>

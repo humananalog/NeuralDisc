@@ -406,15 +406,20 @@ export const api = {
     }),
   jobs: (status?: string) =>
     request<Job[]>(`/api/jobs${qs({ status, limit: 50 })}`),
-  cancelJob: (jobId: string) =>
+  cancelJob: (jobId: string, opts?: { force?: boolean }) =>
     request<{
       job_id: string;
       ok: boolean;
       status?: string | null;
       cancel_requested?: boolean;
+      already_requested?: boolean;
+      forced?: boolean;
       message?: string;
       job?: Job;
-    }>(`/api/jobs/${jobId}/cancel`, { method: "POST" }),
+    }>(
+      `/api/jobs/${jobId}/cancel${opts?.force ? "?force=true" : ""}`,
+      { method: "POST" },
+    ),
   reapStaleJobs: (force = false) =>
     request<{
       reaped: Array<{

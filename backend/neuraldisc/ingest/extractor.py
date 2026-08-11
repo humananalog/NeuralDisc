@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -93,19 +94,34 @@ def make_provenance_name(volume_name: str, when: datetime | None = None) -> str:
     return f"{safe_volume_slug(volume_name)}_{stamp}"
 
 
-def copy_with_sha256(src: Path, dest: Path) -> tuple[str, int]:
-    """Copy file and compute SHA-256 of destination."""
+def copy_with_sha256(
+    src: Path,
+    dest: Path,
+    *,
+    should_cancel: Callable[[], bool] | None = None,
+) -> tuple[str, int]:
+    """Copy file and compute SHA-256 of destination.
+
+    ``should_cancel`` is checked between chunks so cooperative cancel can
+    abort a large copy within ~1 MiB instead of waiting for the whole file.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     with src.open("rb") as rf, dest.open("wb") as wf:
         h = __import__("hashlib").sha256()
         size = 0
         while True:
+            if should_cancel and should_cancel():
+                dest.unlink(missing_ok=True)
+                raise InterruptedError("copy cancelled")
             chunk = rf.read(1024 * 1024)
             if not chunk:
                 break
             wf.write(chunk)
             h.update(chunk)
             size += len(chunk)
+    if should_cancel and should_cancel():
+        dest.unlink(missing_ok=True)
+        raise InterruptedError("copy cancelled")
     # Verify by re-reading dest
     verify = sha256_file(dest)
     if verify != h.hexdigest():

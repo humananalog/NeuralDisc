@@ -294,19 +294,26 @@ export function ImportLivePanel() {
                 {running && (
                   <button
                     type="button"
-                    disabled={!!s?.cancel_requested}
                     onClick={async () => {
                       try {
-                        await api.cancelJob(job.jobId);
+                        const force = Boolean(s?.cancel_requested);
+                        await api.cancelJob(job.jobId, { force });
                         const st = await api.importStatus(job.jobId);
                         updateLiveImport(job.jobId, st);
                       } catch {
-                        /* may finish race */
+                        try {
+                          // Force close if soft cancel left us stuck
+                          await api.cancelJob(job.jobId, { force: true });
+                          const st = await api.importStatus(job.jobId);
+                          updateLiveImport(job.jobId, st);
+                        } catch {
+                          /* may finish race */
+                        }
                       }
                     }}
-                    className="inline-flex flex-1 items-center justify-center rounded-md border border-[var(--danger)]/40 px-2 py-1.5 text-[11px] text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-50"
+                    className="inline-flex flex-1 items-center justify-center rounded-md border border-[var(--danger)]/40 px-2 py-1.5 text-[11px] text-[var(--danger)] hover:bg-[var(--danger)]/10"
                   >
-                    {s?.cancel_requested ? "Cancelling…" : "Cancel job"}
+                    {s?.cancel_requested ? "Force cancel" : "Cancel job"}
                   </button>
                 )}
                 <button

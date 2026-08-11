@@ -146,8 +146,12 @@ def list_live_imports() -> list[dict[str, Any]]:
         return [p.to_dict() for p in _LIVE.values()]
 
 
-def mark_import_cancelled(job_id: str) -> bool:
-    """Flag a live import for cooperative cancel. Returns True if found."""
+def mark_import_cancelled(job_id: str, *, force: bool = False) -> bool:
+    """Flag a live import for cooperative cancel. Returns True if found.
+
+    ``force=True`` finalizes in-memory progress as cancelled so the UI leaves
+    \"Cancelling…\" immediately (worker exits on its next cancel check).
+    """
     with _LIVE_LOCK:
         p = _LIVE.get(job_id)
         if not p:
@@ -156,7 +160,33 @@ def mark_import_cancelled(job_id: str) -> bool:
         if p.status not in ("completed", "failed", "cancelled"):
             p.message = "Cancelling…"
             p.phase = "cancelling"
+            if force:
+                p.status = "cancelled"
+                p.phase = "cancelled"
+                p.finished_at = time.time()
+                p.error = "cancelled_by_user"
+                p.message = (
+                    f"Cancelled: {p.promoted} promoted, {p.rejected} rejected, "
+                    f"{p.copied} copied before stop"
+                )
         return True
+
+
+def force_cancel_import(job_id: str) -> dict[str, Any]:
+    """Escape hatch: close a stuck Cancelling… import in DB + memory now."""
+    found = mark_import_cancelled(job_id, force=True)
+    with _LIVE_LOCK:
+        p = _LIVE.get(job_id)
+    if p:
+        try:
+            _sync_job(job_id, p, finished=True, cancelled=True)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("force_cancel_sync_failed", job_id=job_id, error=str(exc))
+    from neuraldisc.jobs.control import mark_cancelled
+
+    mark_cancelled(job_id, (p.message if p else None) or "Cancelled by user")
+    log.info("import_force_cancelled", job_id=job_id, had_live=found)
+    return {"job_id": job_id, "ok": True, "forced": True, "had_live": found}
 
 
 def _cancelled(progress: ImportProgress) -> bool:
@@ -193,12 +223,33 @@ def _copy_dispatcher_loop() -> None:
             break
         job_id, sources, settings, resume = item
         try:
-            _run_import(job_id, sources, settings, resume=resume)
+            # Skip jobs cancelled while waiting in the serial queue
+            if _cancelled_job_id(job_id):
+                mark_import_cancelled(job_id, force=True)
+                with _LIVE_LOCK:
+                    p = _LIVE.get(job_id)
+                if p:
+                    _sync_job(job_id, p, finished=True, cancelled=True)
+                from neuraldisc.jobs.control import mark_cancelled
+
+                mark_cancelled(job_id, "Cancelled before start")
+                log.info("import_skipped_cancelled_queued", job_id=job_id)
+            else:
+                _run_import(job_id, sources, settings, resume=resume)
         except Exception as exc:  # noqa: BLE001
             log.exception("copy_job_crashed", job_id=job_id, error=str(exc))
         finally:
             _COPY_QUEUE.task_done()
 
+
+def _cancelled_job_id(job_id: str) -> bool:
+    with _LIVE_LOCK:
+        p = _LIVE.get(job_id)
+        if p and p.cancel_requested:
+            return True
+    from neuraldisc.jobs.control import is_cancel_requested
+
+    return is_cancel_requested(job_id)
 
 def start_import(
     sources: list[ImportSource],
@@ -404,6 +455,9 @@ def _run_import(
     _sync_job(job_id, progress)
 
     try:
+        if _cancelled(progress):
+            raise ImportCancelled()
+
         from neuraldisc.processing.metadata import require_exiftool
 
         require_exiftool()  # hard fail import if missing
@@ -655,7 +709,9 @@ def _import_one_source(
     progress.message = f"Scanning {name}…"
     candidates = _scan_candidates(path, source.mode)
     work: list[tuple[Path, str, str]] = []  # src, rel, media_type
-    for src in candidates:
+    for i, src in enumerate(candidates):
+        if i % 8 == 0 and _cancelled(progress):
+            raise ImportCancelled()
         mtype = media_type_for(src)
         try:
             rel = str(src.relative_to(path)) if path.is_dir() else src.name
@@ -673,6 +729,8 @@ def _import_one_source(
             continue
 
         if settings.quality_enabled:
+            if _cancelled(progress):
+                raise ImportCancelled()
             verdict = evaluate_path(src, settings)
             if verdict.rejected:
                 progress.rejected += 1
@@ -684,6 +742,12 @@ def _import_one_source(
         if mtype is None:
             continue
         work.append((src, rel, mtype))
+        if i % 25 == 0:
+            progress.message = (
+                f"Scanning {name}… {i + 1}/{len(candidates)} "
+                f"({len(work)} queued, {progress.rejected} rejected)"
+            )
+            _sync_job(progress.job_id, progress)
 
     # Archives on disc (zip/tar/…) that contain photos/videos → expand on target SSD
     if settings.import_expand_archives:
@@ -777,7 +841,11 @@ def _import_one_source(
         dest_name = f"{seq:04d}_{src.name}"
         staging_path = staging_root / dest_name
         try:
-            digest, size = copy_with_sha256(src, staging_path)
+            digest, size = copy_with_sha256(
+                src,
+                staging_path,
+                should_cancel=lambda: _cancelled(progress),
+            )
             # Resume: skip exact duplicates already in the catalogue
             if skip_existing:
                 with session_scope() as session:
@@ -837,6 +905,9 @@ def _import_one_source(
                         f"processing queue…"
                     )
             return media_id, None, size
+        except InterruptedError:
+            staging_path.unlink(missing_ok=True)
+            return None, "cancelled", 0
         except Exception as exc:  # noqa: BLE001
             with _PROG_LOCK:
                 progress.errors += 1
@@ -905,14 +976,18 @@ def _import_one_source(
             t.start()
 
     indexed = [(i + 1, src, rel, mt) for i, (src, rel, mt) in enumerate(work)]
-    with ThreadPoolExecutor(max_workers=copy_workers) as pool:
+    pool = ThreadPoolExecutor(max_workers=copy_workers)
+    try:
         futures = {pool.submit(copy_one, item): item for item in indexed}
         for fut in as_completed(futures):
             if _cancelled(progress):
                 for f in futures:
                     f.cancel()
                 break
-            media_id, err, _size = fut.result()
+            try:
+                media_id, err, _size = fut.result()
+            except Exception:  # noqa: BLE001
+                continue
             if media_id and not copy_only:
                 process_q.put(media_id)
             # Wake global processor periodically so classify overlaps later discs
@@ -925,6 +1000,10 @@ def _import_one_source(
                     pass
             if progress.copied % 5 == 0 or progress.copied == len(work):
                 _sync_job(progress.job_id, progress)
+    finally:
+        # On cancel: don't block on in-flight large copies — they abort via
+        # should_cancel between chunks; wait=False lets us finalize ASAP.
+        pool.shutdown(wait=not _cancelled(progress), cancel_futures=True)
 
     if _cancelled(progress):
         if not copy_only:

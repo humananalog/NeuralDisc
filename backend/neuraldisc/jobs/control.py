@@ -89,16 +89,32 @@ def live_worker_ids() -> set[str]:
     return live
 
 
-def request_cancel(job_id: str) -> dict:
-    """Request cancellation. Returns status dict for the API."""
+def request_cancel(job_id: str, *, force: bool = False) -> dict:
+    """Request cancellation. Returns status dict for the API.
+
+    ``force=True`` (or a second cancel while already Cancelling…) closes the
+    job immediately even if a worker is still draining — used when UI is stuck.
+    """
     ev = _event(job_id)
     already = ev.is_set()
     ev.set()
 
     # Import progress flag (if live)
     try:
-        from neuraldisc.ingest.importer import mark_import_cancelled
+        from neuraldisc.ingest.importer import mark_import_cancelled, force_cancel_import
 
+        if force or already:
+            # Second click / explicit force → leave Cancelling… now
+            force_cancel_import(job_id)
+            return {
+                "job_id": job_id,
+                "ok": True,
+                "status": "cancelled",
+                "cancel_requested": True,
+                "already_requested": already,
+                "forced": True,
+                "message": "Cancelled",
+            }
         mark_import_cancelled(job_id)
     except Exception as exc:  # noqa: BLE001
         log.debug("import_cancel_hook_failed", error=str(exc))
@@ -149,6 +165,7 @@ def request_cancel(job_id: str) -> dict:
         "status": job_status,
         "cancel_requested": True,
         "already_requested": already,
+        "forced": False,
         "message": "Cancellation requested" if not already else "Cancel already requested",
     }
 
@@ -225,21 +242,33 @@ def reap_orphan_jobs(
             prev = job.status
             done = job.completed or 0
             total = job.total or 0
-            job.status = "interrupted"
-            job.finished_at = now
-            job.error = reason
-            if job.job_type == "inference":
+            # If user had already asked to cancel, don't revive as "interrupted"
+            # (supervisor would auto-resume and recreate Cancelling… limbo).
+            user_cancel = "cancel" in (job.message or "").lower() or (
+                job.error == "cancelled_by_user"
+            )
+            if user_cancel:
+                job.status = "cancelled"
+                job.error = "cancelled_by_user"
                 job.message = (
-                    f"Interrupted: {reason}. "
-                    f"Was {prev} at {done}/{total} analysed. "
-                    "Safe to re-run inference; already-analysed items are kept."
+                    f"Cancelled ({reason}). Was {prev} at {done}/{total}."
                 )
             else:
-                job.message = (
-                    f"Interrupted: {reason}. "
-                    f"Was {prev} at {done}/{total}. "
-                    "Safe to re-run import; already-promoted library items are kept."
-                )
+                job.status = "interrupted"
+                job.error = reason
+                if job.job_type == "inference":
+                    job.message = (
+                        f"Interrupted: {reason}. "
+                        f"Was {prev} at {done}/{total} analysed. "
+                        "Safe to re-run inference; already-analysed items are kept."
+                    )
+                else:
+                    job.message = (
+                        f"Interrupted: {reason}. "
+                        f"Was {prev} at {done}/{total}. "
+                        "Safe to re-run import; already-promoted library items are kept."
+                    )
+            job.finished_at = now
             reaped.append(
                 {
                     "id": job.id,
@@ -247,6 +276,7 @@ def reap_orphan_jobs(
                     "was": prev,
                     "completed": done,
                     "total": total,
+                    "final": job.status,
                 }
             )
             # Stop any zombie thread that might still be looping
