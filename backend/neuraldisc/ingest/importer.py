@@ -673,6 +673,56 @@ def _import_one_source(
             continue
         work.append((src, rel, mtype))
 
+    # Archives on disc (zip/tar/…) that contain photos/videos → expand on target SSD
+    if settings.import_expand_archives:
+        from neuraldisc.ingest.archives import (
+            expand_archives_for_import,
+            scan_archives,
+        )
+
+        archives = scan_archives(path, mode=source.mode)
+        if archives:
+            progress.message = (
+                f"{name}: {len(work)} loose media · checking {len(archives)} archive(s)…"
+            )
+            _sync_job(progress.job_id, progress)
+            if _cancelled(progress):
+                raise ImportCancelled()
+
+            def _arc_msg(msg: str) -> None:
+                progress.message = f"{name}: {msg}"
+                _sync_job(progress.job_id, progress)
+
+            from_archives = expand_archives_for_import(
+                archives,
+                staging_root,
+                settings=settings,
+                source_root=path if path.is_dir() else path.parent,
+                on_progress=_arc_msg,
+            )
+            # Quality-gate extracted files (same rules as loose media)
+            for src, rel, mtype in from_archives:
+                if settings.quality_enabled:
+                    verdict = evaluate_path(src, settings)
+                    if verdict.rejected:
+                        progress.rejected += 1
+                        sample = f"{Path(rel).name}: {verdict.code} — {verdict.reason}"
+                        if len(progress.reject_samples) < 40:
+                            progress.reject_samples.append(sample)
+                        try:
+                            src.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                        continue
+                work.append((src, rel, mtype))
+            log.info(
+                "import_archives",
+                source=str(path),
+                archives=len(archives),
+                media_from_archives=len(from_archives),
+                disc_id=disc_id,
+            )
+
     progress.total += len(work)
     progress.message = f"{name}: {len(work)} files to import"
     log.info("import_scan", source=str(path), candidates=len(work), disc_id=disc_id)

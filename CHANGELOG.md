@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [0.3.0] — 2026-08-11
 
 ### Added
+- **Archive expansion on import**: zip/tar (and rar/7z if tools present) that contain images/video are unpacked to staging and processed
 - **Copy-first import pipeline**: serial disc queue, parallel copy to `library/staging`, job completes when copy finishes (fast optical rotation)
 - **Global staging processor**: background EXIF / blur / derivatives / VLM / promote without blocking the next disc copy
 - `GET /api/import/process/status`, `POST /api/import/process/wake`

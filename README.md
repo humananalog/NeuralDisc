@@ -63,6 +63,7 @@ Designed for the **Mac Mini M4 (24 GB)** and a local external SSD:
 | Capability | Description |
 |---|---|
 | **Copy-first import** | Serial disc queue → parallel copy to `library/staging` → **eject when copy done**; classify in background |
+| **Archives on disc** | Zip/tar (rar/7z if available) with photos/video → expand on library SSD → same pipeline |
 | **Background process** | Global staging processor: EXIF → blur → derivatives → VLM → promote (never blocks next disc copy) |
 | **Target-volume staging** | Temp files only under `library_root` on the library SSD |
 | **Quality gates** | Reject icons, tiny web junk, extreme aspect ratios; optional quarantine |

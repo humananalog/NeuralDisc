@@ -131,6 +131,11 @@ class Settings(BaseSettings):
     import_copy_serial: bool = True
     # How many staging rows the background processor claims per batch
     import_process_claim: int = 16
+    # Expand zip/tar/… on disc when they contain photos/videos
+    import_expand_archives: bool = True
+    # Safety caps for malicious / huge archives (zip bombs)
+    import_archive_max_files: int = 50_000
+    import_archive_max_bytes: int = 8 * 1024 * 1024 * 1024  # 8 GiB total extract
 
     @property
     def library(self) -> Path:

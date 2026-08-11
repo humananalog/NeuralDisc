@@ -163,6 +163,29 @@ class Extractor:
                 if p.is_file() and p.suffix.lower() in walk_exts:
                     candidates.append(p)
 
+        # Expand zip/tar archives that contain media (extract onto staging)
+        work_extra: list[tuple[Path, str]] = []  # path, provenance rel
+        if self.settings.import_expand_archives:
+            from neuraldisc.ingest.archives import (
+                expand_archives_for_import,
+                is_archive_path,
+                scan_archives,
+            )
+
+            if source.is_file() and is_archive_path(source):
+                archives = [source]
+            else:
+                archives = scan_archives(source, mode="folder")
+            if archives:
+                expanded = expand_archives_for_import(
+                    archives,
+                    staging_root,
+                    settings=self.settings,
+                    source_root=source if source.is_dir() else source.parent,
+                )
+                for f, rel, _mtype in expanded:
+                    work_extra.append((f, rel))
+
         seq = 0
         for src in candidates:
             mtype = media_type_for(src)
@@ -229,7 +252,47 @@ class Extractor:
                 except Exception:  # noqa: BLE001
                     pass
 
-        # Persist media rows — lifecycle=staging, HITL only after promote
+        # Files expanded from archives (already on staging volume)
+        for src, rel in work_extra:
+            mtype = media_type_for(src)
+            if mtype is None:
+                result.skipped += 1
+                continue
+            if self.settings.quality_enabled:
+                verdict = evaluate_path(src, self.settings)
+                if verdict.rejected:
+                    result.rejected.append(
+                        RejectedFile(
+                            path=src,
+                            code=verdict.code or "rejected",
+                            reason=verdict.reason or "quality gate",
+                        )
+                    )
+                    result.skipped += 1
+                    continue
+            seq += 1
+            dest_name = f"{seq:04d}_{src.name}"
+            staging_path = staging_root / dest_name
+            try:
+                digest, size = copy_with_sha256(src, staging_path)
+                result.files.append(
+                    ExtractedFile(
+                        source_path=src,
+                        staging_path=staging_path,
+                        library_path=staging_path,
+                        relative_path=rel,
+                        filename=src.name,
+                        media_type=mtype,
+                        sha256=digest,
+                        file_size=size,
+                        seq=seq,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                result.errors.append(f"{src}: {exc}")
+                log.error("extract_archive_member_error", path=str(src), error=str(exc))
+
+        # Persist media rows — lifecycle=staging
         with session_scope() as session:
             disc = session.get(Disc, disc_id)
             if disc is None:
