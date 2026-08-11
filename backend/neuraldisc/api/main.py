@@ -102,8 +102,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:  # noqa: BLE001
         log.warning("hitl_auto_accept_failed", error=str(exc))
 
+    # Auto-resume supervisor: staging + interrupted imports + inference queue
+    try:
+        from neuraldisc.jobs.supervisor import ensure_supervisor_running
+
+        ensure_supervisor_running(cfg)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("auto_resume_supervisor_boot_failed", error=str(exc))
+
     yield
 
+    try:
+        from neuraldisc.jobs.supervisor import stop_supervisor
+
+        stop_supervisor(timeout=2.0)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from neuraldisc.ingest.staging_processor import stop_processor
 

@@ -72,7 +72,7 @@ Designed for the **Mac Mini M4 (24 GB)** and a local external SSD:
 | **Auto-rotate** | EXIF bake + content upright; **batch auto-rotate** on multi-select |
 | **Duplicates** | SHA-256 + pHash; keep-best single / batch / all groups |
 | **Inference** | Dedicated page: queue heuristics, batch VLM, re-analyse, **Release MLX** for other apps |
-| **Jobs** | Progress, cancel, resume interrupted imports, reap stale workers after restart |
+| **Jobs + auto-resume** | Progress, cancel, resume; reap stale workers; supervisor keeps staging/import/inference from sitting idle |
 | **Smart albums** | Auto-organise from EXIF + AI captions/scenes |
 | **Catalogue delete** | Trash (soft) + permanent purge with confirmation; restore |
 | **Modern Web UI** | Live sidebar counts, filters, lightbox, collapsible import dock |

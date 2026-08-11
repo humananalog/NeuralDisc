@@ -137,6 +137,13 @@ class Settings(BaseSettings):
     import_archive_max_files: int = 50_000
     import_archive_max_bytes: int = 8 * 1024 * 1024 * 1024  # 8 GiB total extract
 
+    # Auto-resume supervisor — no unfinished work left idle after restarts
+    auto_resume_enabled: bool = True
+    auto_resume_interval_sec: int = 30
+    auto_resume_imports: bool = True
+    auto_resume_inference: bool = True  # when VLM enabled + library queue non-empty
+    auto_resume_inference_limit: int = 50
+
     @property
     def library(self) -> Path:
         return self.library_root

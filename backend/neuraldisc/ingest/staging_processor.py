@@ -30,6 +30,9 @@ _STATE: "ProcessState | None" = None
 _THREAD: threading.Thread | None = None
 _WAKE = threading.Event()
 _STOP = threading.Event()
+# media_id → consecutive process failures (avoid infinite re-queue)
+_FAIL_COUNTS: dict[str, int] = {}
+_MAX_ITEM_FAILURES = 3
 
 
 @dataclass
@@ -144,6 +147,24 @@ def _process_one(media_id: str, settings: Settings) -> str:
     )
 
 
+def _mark_staging_failed(media_id: str, reason: str) -> None:
+    """Park broken staging rows so they are not retried forever."""
+    try:
+        with session_scope() as session:
+            media = session.get(MediaItem, media_id)
+            if media and media.lifecycle == "staging":
+                media.lifecycle = "error"
+                media.hitl_status = "rejected"
+                media.updated_at = datetime.now(timezone.utc)
+                log.warning(
+                    "staging_item_parked",
+                    media_id=media_id,
+                    reason=reason,
+                )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("staging_park_failed", media_id=media_id, error=str(exc))
+
+
 def _process_loop(settings: Settings) -> None:
     global _STATE
     workers = max(1, settings.import_process_workers)
@@ -208,6 +229,14 @@ def _process_loop(settings: Settings) -> None:
                     mid = futures[fut]
                     try:
                         result = fut.result()
+                        if result == "error":
+                            n = _FAIL_COUNTS.get(mid, 0) + 1
+                            _FAIL_COUNTS[mid] = n
+                            if n >= _MAX_ITEM_FAILURES:
+                                _mark_staging_failed(mid, f"error x{n}")
+                                _FAIL_COUNTS.pop(mid, None)
+                        else:
+                            _FAIL_COUNTS.pop(mid, None)
                         with _LOCK:
                             if _STATE:
                                 if result == "promoted":
@@ -229,6 +258,11 @@ def _process_loop(settings: Settings) -> None:
                             media_id=mid,
                             error=str(exc),
                         )
+                        n = _FAIL_COUNTS.get(mid, 0) + 1
+                        _FAIL_COUNTS[mid] = n
+                        if n >= _MAX_ITEM_FAILURES:
+                            _mark_staging_failed(mid, str(exc))
+                            _FAIL_COUNTS.pop(mid, None)
                         with _LOCK:
                             if _STATE:
                                 _STATE.session_errors += 1

@@ -140,11 +140,27 @@ export NEURALDISC_VLM_ENABLED=true           # local mlx-vlm during process / In
 3. After jobs finish, MLX is **released** automatically; or click **Release MLX** for peer apps (`mlx_lm` on :8088, etc.).  
 4. `POST /api/inference/release` if scripting.
 
-### Jobs: cancel, resume, stale
+### Jobs: cancel, resume, stale, auto-resume
 
 1. **Cancel** — cooperative stop between files.  
 2. **Resume** — interrupted imports: drain staging + re-scan, skip existing SHA-256.  
-3. **Clear stale / Reap orphans** — close `running`/`queued` rows with no live worker (e.g. after API restart). Safe: library media stays.
+3. **Clear stale / Reap orphans** — close `running`/`queued` rows with no live worker (e.g. after API restart). Safe: library media stays.  
+4. **Auto-resume supervisor** (default on) — every ~30s and on API start:  
+   - wake staging processor if `lifecycle=staging` rows remain  
+   - resume interrupted/failed **import** jobs (one at a time)  
+   - re-queue interrupted **post_ingest**  
+   - when VLM is enabled, start **inference** batches for pending/heuristic library items (cooldown 2 min)  
+
+```bash
+# Toggle
+export NEURALDISC_AUTO_RESUME_ENABLED=true
+export NEURALDISC_AUTO_RESUME_INFERENCE=true
+export NEURALDISC_AUTO_RESUME_INTERVAL_SEC=30
+
+# Inspect / nudge
+curl -s http://127.0.0.1:8000/api/jobs/supervisor
+curl -s -X POST http://127.0.0.1:8000/api/jobs/supervisor/tick
+```
 
 ### Cancel a job
 

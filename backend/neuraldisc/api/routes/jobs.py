@@ -104,7 +104,38 @@ def reap_stale_jobs(
         force_all_active=False,
         only_orphans=True,
     )
+    # Immediately re-queue unfinished work so nothing sits idle
+    try:
+        from neuraldisc.jobs.supervisor import run_recovery_pass
+
+        result["auto_resume"] = run_recovery_pass()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("post_reap_auto_resume_failed", error=str(exc))
+        result["auto_resume"] = []
     return result
+
+
+@router.get("/supervisor")
+def supervisor_status() -> dict:
+    """Auto-resume supervisor state (staging / import / inference)."""
+    from neuraldisc.ingest.staging_processor import get_process_state, staging_pending_count
+    from neuraldisc.jobs.supervisor import get_supervisor_state
+
+    return {
+        "supervisor": get_supervisor_state(),
+        "staging": get_process_state(),
+        "staging_pending": staging_pending_count(),
+    }
+
+
+@router.post("/supervisor/tick")
+def supervisor_tick() -> dict:
+    """Force one auto-resume pass (manual nudge)."""
+    from neuraldisc.jobs.supervisor import ensure_supervisor_running, run_recovery_pass
+
+    ensure_supervisor_running()
+    actions = run_recovery_pass()
+    return {"ok": True, "actions": actions}
 
 
 @router.get("/{job_id}")

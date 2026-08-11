@@ -73,7 +73,9 @@ Default: **serial copy** to `library/staging`, then **background process**. Impo
 | GET | `/api/jobs/live` | In-process worker ids |
 | POST | `/api/jobs/{id}/cancel` | Cooperative cancel; closes orphan jobs immediately |
 | POST | `/api/jobs/{id}/resume` | Resume interrupted import |
-| POST | `/api/jobs/reap-stale` | Close active jobs with no live worker |
+| POST | `/api/jobs/reap-stale` | Close active jobs with no live worker; triggers auto-resume pass |
+| GET | `/api/jobs/supervisor` | Auto-resume supervisor + staging process state |
+| POST | `/api/jobs/supervisor/tick` | Force one auto-resume pass |
 
 ## HITL (legacy)
 
