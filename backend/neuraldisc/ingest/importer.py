@@ -17,6 +17,7 @@ Legacy mode (``import_copy_only=False``): copy + process pipelined per file.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import threading
 import time
@@ -34,6 +35,7 @@ from neuraldisc.db.models import Disc, HitlQueueItem, Job, MediaItem
 from neuraldisc.ingest.detector import probe_volume
 from neuraldisc.ingest.extractor import (
     copy_with_sha256,
+    file_is_readable,
     make_provenance_name,
     media_type_for,
 )
@@ -660,6 +662,16 @@ def _import_one_source(
         except ValueError:
             rel = src.name
 
+        # Always skip unreadable files at scan time (even if quality gates off)
+        ok, why = file_is_readable(src)
+        if not ok:
+            progress.rejected += 1
+            sample = f"{src.name}: unreadable — {why or 'cannot open'}"
+            if len(progress.reject_samples) < 40:
+                progress.reject_samples.append(sample)
+            log.info("import_skip_unreadable", path=str(src), reason=why)
+            continue
+
         if settings.quality_enabled:
             verdict = evaluate_path(src, settings)
             if verdict.rejected:
@@ -702,6 +714,17 @@ def _import_one_source(
             )
             # Quality-gate extracted files (same rules as loose media)
             for src, rel, mtype in from_archives:
+                ok, why = file_is_readable(src)
+                if not ok:
+                    progress.rejected += 1
+                    sample = f"{Path(rel).name}: unreadable — {why or 'cannot open'}"
+                    if len(progress.reject_samples) < 40:
+                        progress.reject_samples.append(sample)
+                    try:
+                        src.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    continue
                 if settings.quality_enabled:
                     verdict = evaluate_path(src, settings)
                     if verdict.rejected:
@@ -976,13 +999,54 @@ def _scan_candidates(path: Path, mode: str) -> list[Path]:
     walk_exts |= set(MEDIA_EXTENSIONS)
     walk_exts |= {".svg", ".svgz", ".eps", ".ai", ".pdf", ".ico", ".icns", ".emf", ".wmf"}
 
-    if path.is_file():
-        return [path]
-    if mode == "media" and path.is_dir():
-        # Non-recursive single folder of media
-        return sorted(p for p in path.iterdir() if p.is_file() and p.suffix.lower() in walk_exts)
-    # disc / folder / batch item: recursive
-    return sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in walk_exts)
+    def _safe_files(paths) -> list[Path]:
+        out: list[Path] = []
+        for p in paths:
+            try:
+                if p.is_file() and p.suffix.lower() in walk_exts:
+                    out.append(p)
+            except OSError as exc:
+                log.info("import_scan_entry_skipped", path=str(p), reason=str(exc))
+        return sorted(out)
+
+    try:
+        if path.is_file():
+            return [path]
+        if mode == "media" and path.is_dir():
+            # Non-recursive single folder of media
+            try:
+                return _safe_files(path.iterdir())
+            except OSError as exc:
+                log.warning("import_scan_failed", path=str(path), error=str(exc))
+                return []
+        # disc / folder / batch item: recursive — walk defensively so one
+        # unreadable directory does not abort the whole scan
+        found: list[Path] = []
+        for root, dirnames, filenames in os.walk(path, followlinks=False):
+            keep_dirs: list[str] = []
+            for d in list(dirnames):
+                sub = Path(root) / d
+                try:
+                    os.listdir(sub)
+                    keep_dirs.append(d)
+                except OSError as exc:
+                    log.info(
+                        "import_scan_dir_skipped",
+                        path=str(sub),
+                        reason=str(exc),
+                    )
+            dirnames[:] = keep_dirs
+            for name in filenames:
+                p = Path(root) / name
+                try:
+                    if p.is_file() and p.suffix.lower() in walk_exts:
+                        found.append(p)
+                except OSError as exc:
+                    log.info("import_scan_entry_skipped", path=str(p), reason=str(exc))
+        return sorted(found)
+    except OSError as exc:
+        log.warning("import_scan_failed", path=str(path), error=str(exc))
+        return []
 
 
 def _sync_job(

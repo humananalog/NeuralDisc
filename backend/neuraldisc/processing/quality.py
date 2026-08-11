@@ -164,6 +164,13 @@ def evaluate_path(path: Path, settings: Settings) -> QualityVerdict:
     except OSError as exc:
         return reject("unreadable", str(exc))
 
+    # Prove the bytes are readable (stat can succeed on some mounts while open fails)
+    try:
+        with path.open("rb") as f:
+            f.read(1)
+    except OSError as exc:
+        return reject("unreadable", str(exc) or "cannot open for reading")
+
     # Absolute floor — empty / truncated trash
     if size <= 0:
         return reject("empty", "Empty file")

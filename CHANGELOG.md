@@ -5,6 +5,11 @@ All notable changes to NeuralDisc are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.4] — 2026-08-11
+
+### Fixed
+- Import scan skips unreadable files/dirs (permission / I/O) instead of queuing them as copy errors; archives scanned the same way
+
 ## [0.3.3] — 2026-08-11
 
 ### Added
@@ -118,6 +123,7 @@ First full application release: local library backend, Next.js UI, high-throughp
 
 ---
 
+[0.3.4]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.4
 [0.3.3]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.3
 [0.3.2]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.2
 [0.3.1]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.1

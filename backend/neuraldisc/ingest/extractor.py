@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -46,6 +47,25 @@ class ExtractResult:
     errors: list[str] = field(default_factory=list)
     skipped: int = 0
     rejected: list[RejectedFile] = field(default_factory=list)
+
+
+def file_is_readable(path: Path) -> tuple[bool, str | None]:
+    """Return whether *path* can actually be opened for reading.
+
+    Optical discs and odd mounts often list files that ``stat`` but fail on
+    ``open`` (permissions, I/O errors, broken UDF entries). Import scanning
+    must skip these instead of queuing them as copy errors.
+    """
+    try:
+        if not path.is_file():
+            return False, "not a regular file"
+        if not os.access(path, os.R_OK):
+            return False, "permission denied"
+        with path.open("rb") as f:
+            f.read(1)
+        return True, None
+    except OSError as exc:
+        return False, str(exc) or exc.__class__.__name__
 
 
 def media_type_for(path: Path) -> str | None:
@@ -193,6 +213,19 @@ class Extractor:
                 rel = str(src.relative_to(source)) if source.is_dir() else src.name
             except ValueError:
                 rel = src.name
+
+            ok, why = file_is_readable(src)
+            if not ok:
+                result.rejected.append(
+                    RejectedFile(
+                        path=src,
+                        code="unreadable",
+                        reason=why or "cannot open for reading",
+                    )
+                )
+                result.skipped += 1
+                log.info("extract_skip_unreadable", path=str(src), reason=why)
+                continue
 
             # Quality gate BEFORE copy — junk never enters originals/
             if self.settings.quality_enabled:

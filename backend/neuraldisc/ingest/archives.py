@@ -122,20 +122,54 @@ def _safe_rel_path(member: str) -> Path | None:
 
 def scan_archives(root: Path, *, mode: str = "disc") -> list[Path]:
     """Find archive files under root (or the file itself)."""
+    from neuraldisc.ingest.extractor import file_is_readable
+
     if root.is_file():
-        return [root] if is_archive_path(root) else []
+        if not is_archive_path(root):
+            return []
+        ok, why = file_is_readable(root)
+        if not ok:
+            log.info("archive_skip_unreadable", path=str(root), reason=why)
+            return []
+        return [root]
     if not root.is_dir():
         return []
     found: list[Path] = []
-    if mode == "media":
-        # Non-recursive: only archives sitting in the folder
-        for p in sorted(root.iterdir()):
-            if p.is_file() and is_archive_path(p):
-                found.append(p)
-        return found
-    for p in sorted(root.rglob("*")):
-        if p.is_file() and is_archive_path(p):
+    try:
+        if mode == "media":
+            entries = list(root.iterdir())
+        else:
+            entries = []
+            for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+                keep: list[str] = []
+                for d in list(dirnames):
+                    sub = Path(dirpath) / d
+                    try:
+                        os.listdir(sub)
+                        keep.append(d)
+                    except OSError as exc:
+                        log.info(
+                            "archive_scan_dir_skipped",
+                            path=str(sub),
+                            reason=str(exc),
+                        )
+                dirnames[:] = keep
+                for name in filenames:
+                    entries.append(Path(dirpath) / name)
+        for p in sorted(entries):
+            try:
+                if not (p.is_file() and is_archive_path(p)):
+                    continue
+            except OSError as exc:
+                log.info("archive_scan_entry_skipped", path=str(p), reason=str(exc))
+                continue
+            ok, why = file_is_readable(p)
+            if not ok:
+                log.info("archive_skip_unreadable", path=str(p), reason=why)
+                continue
             found.append(p)
+    except OSError as exc:
+        log.warning("archive_scan_failed", path=str(root), error=str(exc))
     return found
 
 
