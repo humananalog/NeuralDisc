@@ -167,7 +167,11 @@ def process_media_item(
 
         # Metadata — exiftool is mandatory
         try:
-            meta = extract_metadata(path, media.media_type)
+            meta = extract_metadata(
+                path,
+                media.media_type,
+                original_relpath=media.original_path,
+            )
         except ExifToolNotFoundError:
             log.error("exiftool_required_missing", media_id=media.id)
             raise
@@ -188,6 +192,13 @@ def process_media_item(
             media.gps_lon = meta.gps_lon
             media.orientation = meta.orientation
             media.duration_ms = meta.duration_ms
+            if meta.taken_at_source:
+                log.debug(
+                    "taken_at_resolved",
+                    media_id=media.id,
+                    source=meta.taken_at_source,
+                    taken_at=meta.taken_at.isoformat() if meta.taken_at else None,
+                )
         media.updated_at = datetime.now(timezone.utc)
         session.flush()
 

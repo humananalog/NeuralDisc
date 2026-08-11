@@ -211,5 +211,43 @@ def stats(
     )
 
 
+@app.command("repair-dates")
+def repair_dates(
+    library: Optional[Path] = typer.Option(None, "--library", "-L"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report changes without writing"),
+    all_items: bool = typer.Option(
+        False,
+        "--all",
+        help="Re-check every item (default: only import-dated / missing taken_at)",
+    ),
+    reorganise: bool = typer.Option(
+        True,
+        "--reorganise/--no-reorganise",
+        help="Rebuild year/event smart albums after updates",
+    ),
+) -> None:
+    """Fix taken_at that was set to import/copy time instead of capture/EXIF/path date."""
+    _bootstrap(library)
+    from neuraldisc.processing.dates_repair import repair_taken_at
+
+    with session_scope() as session:
+        result = repair_taken_at(
+            session,
+            dry_run=dry_run,
+            only_suspicious=not all_items,
+        )
+    # Separate transaction: organise must not roll back date fixes on failure
+    org = None
+    if reorganise and not dry_run and (result.updated or result.cleared):
+        from neuraldisc.processing.organisation import auto_organise
+
+        with session_scope() as session:
+            org = auto_organise(session, min_members=2).as_dict()
+    payload: dict = {"dry_run": dry_run, **result.as_dict()}
+    if org is not None:
+        payload["organise"] = org
+    console.print(json.dumps(payload, indent=2))
+
+
 if __name__ == "__main__":
     app()

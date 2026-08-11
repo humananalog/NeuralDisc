@@ -37,6 +37,7 @@ class MediaMetadata:
     height: int | None = None
     mime_type: str | None = None
     taken_at: datetime | None = None
+    taken_at_source: str | None = None  # exif|path|mtime|birthtime
     camera_make: str | None = None
     camera_model: str | None = None
     gps_lat: float | None = None
@@ -51,6 +52,33 @@ class MediaMetadata:
     software: str | None = None
     raw: dict[str, Any] | None = None
     source: str = "exiftool"
+
+
+# Capture / digitization times — NEVER FileModifyDate / ModifyDate (often copy time)
+_CAPTURE_DATE_KEYS = (
+    "DateTimeOriginal",
+    "SubSecDateTimeOriginal",
+    "DateTimeDigitized",
+    "CreateDate",
+    "DateCreated",
+    "MediaCreateDate",
+    "TrackCreateDate",
+    "DateTimeCreated",
+    "GPSDateTime",
+    "ContentCreateDate",
+    "DateTime",
+)
+
+# DD-MM-YYYY, YYYY-MM-DD, YYYYMMDD in folder/file names (e.g. "Gleniff … 28-02-2005")
+_PATH_DATE_RES = (
+    re.compile(
+        r"(?<!\d)(?P<d>\d{1,2})[-_./ ](?P<m>\d{1,2})[-_./ ](?P<y>19\d{2}|20\d{2})(?!\d)"
+    ),
+    re.compile(
+        r"(?<!\d)(?P<y>19\d{2}|20\d{2})[-_./](?P<m>\d{1,2})[-_./](?P<d>\d{1,2})(?!\d)"
+    ),
+    re.compile(r"(?<!\d)(?P<y>19\d{2}|20\d{2})(?P<m>\d{2})(?P<d>\d{2})(?!\d)"),
+)
 
 
 @lru_cache(maxsize=1)
@@ -107,18 +135,26 @@ def require_exiftool() -> str:
     return binary
 
 
-def extract_metadata(path: Path, media_type: str) -> MediaMetadata:
+def extract_metadata(
+    path: Path,
+    media_type: str,
+    *,
+    original_relpath: str | None = None,
+) -> MediaMetadata:
     """Extract metadata using exiftool for images and videos.
 
-    Raises:
-        ExifToolNotFoundError: binary missing
-        ExifToolError: exiftool failed for this file
+    ``original_relpath`` (disc-relative path) is used to recover dates from
+    folder names when EXIF has no capture time (common on burned discs).
     """
     del media_type  # both handled by exiftool
-    return _exiftool_extract(path)
+    return _exiftool_extract(path, original_relpath=original_relpath)
 
 
-def extract_metadata_batch(paths: list[Path]) -> dict[str, MediaMetadata]:
+def extract_metadata_batch(
+    paths: list[Path],
+    *,
+    original_relpaths: dict[str, str] | None = None,
+) -> dict[str, MediaMetadata]:
     """Batch exiftool call for higher throughput during import."""
     if not paths:
         return {}
@@ -156,6 +192,7 @@ def extract_metadata_batch(paths: list[Path]) -> dict[str, MediaMetadata]:
     except json.JSONDecodeError as exc:
         raise ExifToolError("exiftool returned invalid JSON") from exc
 
+    orig_map = original_relpaths or {}
     out: dict[str, MediaMetadata] = {}
     for row in rows:
         src = row.get("SourceFile") or row.get("File:FileName")
@@ -163,13 +200,16 @@ def extract_metadata_batch(paths: list[Path]) -> dict[str, MediaMetadata]:
             continue
         # SourceFile may be relative; resolve against each path
         key = str(Path(src).resolve()) if Path(src).exists() else src
-        out[key] = _parse_exiftool_row(row)
+        rel = orig_map.get(key) or orig_map.get(str(src)) or orig_map.get(Path(src).name)
+        out[key] = _parse_exiftool_row(row, path=Path(src), original_relpath=rel)
         # also index by basename match
         out[Path(src).name] = out[key]
     return out
 
 
-def _exiftool_extract(path: Path) -> MediaMetadata:
+def _exiftool_extract(
+    path: Path, *, original_relpath: str | None = None
+) -> MediaMetadata:
     binary = find_exiftool()
     path = path.resolve()
     try:
@@ -210,10 +250,15 @@ def _exiftool_extract(path: Path) -> MediaMetadata:
     except (json.JSONDecodeError, IndexError, TypeError) as exc:
         raise ExifToolError(f"exiftool JSON parse error for {path.name}") from exc
 
-    return _parse_exiftool_row(data)
+    return _parse_exiftool_row(data, path=path, original_relpath=original_relpath)
 
 
-def _parse_exiftool_row(data: dict[str, Any]) -> MediaMetadata:
+def _parse_exiftool_row(
+    data: dict[str, Any],
+    *,
+    path: Path | None = None,
+    original_relpath: str | None = None,
+) -> MediaMetadata:
     """Map exiftool -json (-G1 -n) keys into MediaMetadata."""
     # Flatten Group:Tag → prefer EXIF/Composite/File
     flat = _flatten_exiftool(data)
@@ -240,19 +285,11 @@ def _parse_exiftool_row(data: dict[str, Any]) -> MediaMetadata:
     meta.f_number = _as_str(flat.get("FNumber") or flat.get("Aperture"))
     meta.software = _as_str(flat.get("Software"))
 
-    for key in (
-        "DateTimeOriginal",
-        "CreateDate",
-        "MediaCreateDate",
-        "TrackCreateDate",
-        "DateTimeCreated",
-        "ModifyDate",
-        "FileModifyDate",
-    ):
-        if key in flat and flat[key] is not None:
-            meta.taken_at = _parse_exif_dt(str(flat[key]))
-            if meta.taken_at:
-                break
+    taken, src = _resolve_taken_at(
+        flat, path=path, original_relpath=original_relpath
+    )
+    meta.taken_at = taken
+    meta.taken_at_source = src
 
     lat = flat.get("GPSLatitude")
     lon = flat.get("GPSLongitude")
@@ -279,6 +316,83 @@ def _parse_exiftool_row(data: dict[str, Any]) -> MediaMetadata:
             pass
 
     return meta
+
+
+def _resolve_taken_at(
+    flat: dict[str, Any],
+    *,
+    path: Path | None = None,
+    original_relpath: str | None = None,
+) -> tuple[datetime | None, str | None]:
+    """Pick capture time: EXIF capture tags → path date → filesystem times.
+
+    Deliberately ignores FileModifyDate / ModifyDate — those become the import
+    clock after a naive copy and produced thousands of wrong \"today\" dates.
+    """
+    for key in _CAPTURE_DATE_KEYS:
+        if key in flat and flat[key] is not None:
+            dt = _parse_exif_dt(str(flat[key]))
+            if dt and _plausible_capture_date(dt):
+                return dt, f"exif:{key}"
+
+    path_hint = original_relpath or (str(path) if path else None)
+    if path_hint:
+        dt = parse_date_from_path(path_hint)
+        if dt and _plausible_capture_date(dt):
+            return dt, "path"
+
+    if path is not None:
+        try:
+            st = path.stat()
+        except OSError:
+            return None, None
+        # Prefer birthtime (macOS) when it looks historical
+        birth = getattr(st, "st_birthtime", None)
+        if birth:
+            dt = datetime.fromtimestamp(birth, tz=timezone.utc)
+            if _plausible_capture_date(dt) and not _looks_like_import_clock(dt):
+                return dt, "birthtime"
+        dt = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
+        if _plausible_capture_date(dt) and not _looks_like_import_clock(dt):
+            return dt, "mtime"
+
+    return None, None
+
+
+def parse_date_from_path(text: str) -> datetime | None:
+    """Extract a calendar date from folder/file path segments."""
+    # Prefer directory parts over filename (folder often holds the shoot date)
+    parts = list(Path(text.replace("\\", "/")).parts)
+    # Search from deepest parent to root, then filename
+    ordered = list(reversed(parts[:-1])) + ([parts[-1]] if parts else [])
+    for part in ordered:
+        for rx in _PATH_DATE_RES:
+            m = rx.search(part)
+            if not m:
+                continue
+            try:
+                y = int(m.group("y"))
+                mo = int(m.group("m"))
+                d = int(m.group("d"))
+                dt = datetime(y, mo, d, tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                continue
+            if _plausible_capture_date(dt):
+                return dt
+    return None
+
+
+def _plausible_capture_date(dt: datetime) -> bool:
+    year = dt.year
+    return 1970 <= year <= datetime.now(timezone.utc).year + 1
+
+
+def _looks_like_import_clock(dt: datetime) -> bool:
+    """True when timestamp is within ~2 days of now (likely copy/import time)."""
+    now = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return abs((now - dt).total_seconds()) < 2 * 86400
 
 
 def _flatten_exiftool(data: dict[str, Any]) -> dict[str, Any]:

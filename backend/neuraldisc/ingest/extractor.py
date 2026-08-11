@@ -102,10 +102,17 @@ def copy_with_sha256(
 ) -> tuple[str, int]:
     """Copy file and compute SHA-256 of destination.
 
+    Preserves source mtime/atime so EXIF-less photos keep their capture-ish
+    filesystem dates instead of inheriting the import clock.
+
     ``should_cancel`` is checked between chunks so cooperative cancel can
     abort a large copy within ~1 MiB instead of waiting for the whole file.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        src_stat = src.stat()
+    except OSError:
+        src_stat = None
     with src.open("rb") as rf, dest.open("wb") as wf:
         h = __import__("hashlib").sha256()
         size = 0
@@ -122,6 +129,12 @@ def copy_with_sha256(
     if should_cancel and should_cancel():
         dest.unlink(missing_ok=True)
         raise InterruptedError("copy cancelled")
+    # Restore source timestamps BEFORE checksum re-read (mtime used as date fallback)
+    if src_stat is not None:
+        try:
+            os.utime(dest, (src_stat.st_atime, src_stat.st_mtime), follow_symlinks=True)
+        except OSError:
+            pass
     # Verify by re-reading dest
     verify = sha256_file(dest)
     if verify != h.hexdigest():

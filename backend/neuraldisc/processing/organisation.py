@@ -25,6 +25,18 @@ from neuraldisc.utils.logging import get_logger
 
 log = get_logger(__name__)
 
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _aware_taken_at(dt: datetime | None) -> datetime:
+    """Sort key helper — SQLite may return naive datetimes."""
+    if dt is None:
+        return _EPOCH
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 # Minimum members to create an auto album / smart collection
 MIN_ALBUM = 2
 MIN_SCENE = 3
@@ -280,10 +292,7 @@ def auto_organise(
         if len(members) < thr:
             return
         # Prefer dated order for materialization
-        ordered = sorted(
-            members,
-            key=lambda x: (x.taken_at or datetime.min.replace(tzinfo=timezone.utc)),
-        )
+        ordered = sorted(members, key=lambda x: _aware_taken_at(x.taken_at))
         ids = [m.id for m in ordered]
         # Cover: best rated then sharpest then first
         cover_src = max(
@@ -423,7 +432,7 @@ def auto_organise(
     # Events: cluster consecutive dated media (gap > EVENT_GAP_DAYS starts new event)
     if include_events:
         dated = [m for m in items if m.taken_at]
-        dated.sort(key=lambda m: m.taken_at or datetime.min.replace(tzinfo=timezone.utc))
+        dated.sort(key=lambda m: _aware_taken_at(m.taken_at))
         clusters: list[list[MediaItem]] = []
         cur: list[MediaItem] = []
         for m in dated:
