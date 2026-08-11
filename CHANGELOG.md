@@ -5,6 +5,12 @@ All notable changes to NeuralDisc are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] — 2026-08-11
+
+### Fixed
+- Infinite inference job spam: VLM JSON was truncating (`max_tokens` too low) so the same ~15 images stayed `vlm-failed` and auto-chain/supervisor kept spawning identical batches
+- Raise VLM token budget, salvage truncated JSON, cap auto-retries (`vlm-gave-up`), and stop chaining when a batch makes no progress
+
 ## [0.3.1] — 2026-08-11
 
 ### Fixed
@@ -104,6 +110,7 @@ First full application release: local library backend, Next.js UI, high-throughp
 
 ---
 
+[0.3.2]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.2
 [0.3.1]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.1
 [0.3.0]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.0
 [0.2.0]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.2.0

@@ -72,8 +72,11 @@ Rules:
 - people_count is an integer count of distinct people visible (0 if none).
 - quality_score 0-1 for photographic quality (focus, exposure, composition).
 - confidence 0-1 for how sure you are about the analysis.
+- caption_short: concise 5-12 word English caption (strict word limit)
+- description: at most 2 short sentences
 - Prefer specific tags (e.g. "ferry", "harbour") over generic ones.
 - If the image is blurry or low quality, lower quality_score and still describe content.
+- Keep the entire JSON under ~600 tokens; never omit closing braces.
 """
 
 _model_lock = threading.Lock()
@@ -83,7 +86,30 @@ _load_refcount = 0
 _load_refcount_lock = threading.Lock()
 
 
-def analyse_media(session: Session, media: MediaItem, settings: Settings) -> MediaAnalysis | None:
+def _vlm_failure_attempts(model_version: str | None) -> int:
+    """Parse attempt count from model_version like ``vlm-failed`` / ``vlm-failed:3``."""
+    if not model_version:
+        return 0
+    v = model_version.lower().strip()
+    if v.startswith("vlm-gave-up"):
+        return 10_000
+    if v == "vlm-failed":
+        return 1
+    if v.startswith("vlm-failed:"):
+        try:
+            return max(1, int(v.split(":", 1)[1]))
+        except ValueError:
+            return 1
+    return 0
+
+
+def analyse_media(
+    session: Session,
+    media: MediaItem,
+    settings: Settings,
+    *,
+    prior_vlm_failures: int = 0,
+) -> MediaAnalysis | None:
     if media.analysis:
         return media.analysis
 
@@ -104,10 +130,20 @@ def analyse_media(session: Session, media: MediaItem, settings: Settings) -> Med
 
     if result is None:
         if settings.vlm_enabled:
-            log.warning("vlm_fallback_heuristic", media_id=media.id)
-            # Tag so auto-requeue / Inference queue always picks these up
+            attempts = max(0, int(prior_vlm_failures)) + 1
+            max_auto = max(1, int(getattr(settings, "vlm_auto_retry_max", 2) or 2))
+            log.warning(
+                "vlm_fallback_heuristic",
+                media_id=media.id,
+                attempts=attempts,
+                max_auto=max_auto,
+            )
             model_name = "heuristic-fallback"
-            model_version = "vlm-failed"
+            # After max auto retries, leave the auto-chain queue (manual re-run still ok)
+            if attempts >= max_auto:
+                model_version = "vlm-gave-up"
+            else:
+                model_version = f"vlm-failed:{attempts}"
         result = _heuristic_analysis(media)
 
     result = _normalize_result(result, media)
@@ -137,6 +173,9 @@ def analyse_media(session: Session, media: MediaItem, settings: Settings) -> Med
 
 def reanalyse_media(session: Session, media: MediaItem, settings: Settings) -> MediaAnalysis | None:
     """Force re-run VLM (delete existing analysis)."""
+    prior = 0
+    if media.analysis is not None:
+        prior = _vlm_failure_attempts(media.analysis.model_version)
     # Use bulk delete to avoid SQLAlchemy relationship nulling the PK on MediaAnalysis
     session.query(MediaAnalysis).filter(MediaAnalysis.media_id == media.id).delete(
         synchronize_session=False
@@ -144,7 +183,7 @@ def reanalyse_media(session: Session, media: MediaItem, settings: Settings) -> M
     session.expire(media, ["analysis"])
     media.analysis = None
     session.flush()
-    return analyse_media(session, media, settings)
+    return analyse_media(session, media, settings, prior_vlm_failures=prior)
 
 
 def _heuristic_analysis(media: MediaItem) -> dict[str, Any]:
@@ -297,6 +336,7 @@ def _run_mlx_vlm(path: Path, settings: Settings) -> dict[str, Any] | None:
         formatted = apply_chat_template(
             processor, config, VLM_PROMPT, num_images=1
         )
+        max_tokens = max(256, int(getattr(settings, "vlm_max_tokens", 1536) or 1536))
         with _model_lock:
             out = generate(
                 model,
@@ -304,7 +344,7 @@ def _run_mlx_vlm(path: Path, settings: Settings) -> dict[str, Any] | None:
                 formatted,
                 [str(path)],
                 verbose=False,
-                max_tokens=640,
+                max_tokens=max_tokens,
                 temp=0.2,
             )
         # mlx-vlm may return str or object with .text
@@ -316,7 +356,7 @@ def _run_mlx_vlm(path: Path, settings: Settings) -> dict[str, Any] | None:
             text = out if isinstance(out, str) else str(out)
         parsed = _parse_json_blob(text)
         if parsed is None:
-            log.warning("vlm_json_parse_failed", sample=text[:200])
+            log.warning("vlm_json_parse_failed", sample=text[:200], chars=len(text))
         return parsed
     except Exception as exc:  # noqa: BLE001
         log.warning("mlx_vlm_failed", error=str(exc), path=str(path))
@@ -329,20 +369,62 @@ def _parse_json_blob(text: str) -> dict[str, Any] | None:
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     start = text.find("{")
-    end = text.rfind("}")
-    if start < 0 or end < 0:
+    if start < 0:
         return None
-    blob = text[start : end + 1]
+    end = text.rfind("}")
+    blob = text[start : end + 1] if end > start else text[start:]
+    parsed = _loads_json_lenient(blob)
+    if parsed is not None:
+        return parsed
+    # Truncated generation: close open strings / brackets and retry
+    repaired = _repair_truncated_json(blob)
+    if repaired and repaired != blob:
+        return _loads_json_lenient(repaired)
+    return None
+
+
+def _loads_json_lenient(blob: str) -> dict[str, Any] | None:
     try:
-        return json.loads(blob)
+        data = json.loads(blob)
+        return data if isinstance(data, dict) else None
     except json.JSONDecodeError:
-        # Try fixing trailing commas
         fixed = re.sub(r",\s*}", "}", blob)
         fixed = re.sub(r",\s*]", "]", fixed)
         try:
-            return json.loads(fixed)
+            data = json.loads(fixed)
+            return data if isinstance(data, dict) else None
         except json.JSONDecodeError:
             return None
+
+
+def _repair_truncated_json(blob: str) -> str | None:
+    """Best-effort close of truncated model JSON (common when max_tokens cuts mid-string)."""
+    if not blob or not blob.lstrip().startswith("{"):
+        return None
+    s = blob.rstrip()
+    # If we ended mid-string, close the quote
+    in_string = False
+    escape = False
+    for ch in s:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+    if in_string:
+        s += '"'
+    s = re.sub(r",\s*$", "", s)
+    # Count unmatched braces/brackets outside strings (approx after close)
+    opens_brace = s.count("{") - s.count("}")
+    opens_brack = s.count("[") - s.count("]")
+    if opens_brack > 0:
+        s += "]" * opens_brack
+    if opens_brace > 0:
+        s += "}" * opens_brace
+    return s
 
 
 def _normalize_result(result: dict[str, Any], media: MediaItem) -> dict[str, Any]:

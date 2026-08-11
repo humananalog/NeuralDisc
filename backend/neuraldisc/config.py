@@ -108,6 +108,10 @@ class Settings(BaseSettings):
     embedding_model: str = "clip-vit-base-patch32"
     vlm_enabled: bool = False
     embeddings_enabled: bool = False
+    # Generation budget — too low truncates JSON → parse fail → infinite requeue
+    vlm_max_tokens: int = 1536
+    # Auto-chain/supervisor stop retrying after this many consecutive VLM failures
+    vlm_auto_retry_max: int = 2
 
     # Jobs
     redis_url: str = "redis://localhost:6379/0"

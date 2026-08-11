@@ -39,21 +39,33 @@ def _is_heuristic(
         or m in ("quality-gate", "none", "")
         or "vlm-failed" in m
         or "vlm-failed" in v
+        or "vlm-gave-up" in v
         or m.endswith(":failed")
     )
 
 
-def _heuristic_filter():
-    """SQL filter: analysis that is not real VLM (failed / never ran)."""
-    return or_(
+def _heuristic_filter(*, include_gave_up: bool = False):
+    """SQL filter: analysis that is not real VLM (failed / never ran).
+
+    ``vlm-gave-up`` is excluded from auto-chain/supervisor by default so
+    persistent parse/OOM failures cannot spawn infinite jobs.
+    """
+    from sqlalchemy import and_, not_
+
+    clauses = [
         MediaAnalysis.model_name.is_(None),
         MediaAnalysis.model_name == "",
         MediaAnalysis.model_name.ilike("%heuristic%"),
         MediaAnalysis.model_name.ilike("%quality-gate%"),
         MediaAnalysis.model_name.ilike("%vlm-failed%"),
         MediaAnalysis.model_version.ilike("%vlm-failed%"),
-        MediaAnalysis.model_version.ilike("%failed%"),
-    )
+    ]
+    if include_gave_up:
+        clauses.append(MediaAnalysis.model_version.ilike("%vlm-gave-up%"))
+    filt = or_(*clauses)
+    if not include_gave_up:
+        filt = and_(filt, not_(MediaAnalysis.model_version.ilike("%vlm-gave-up%")))
+    return filt
 
 
 def collect_inference_queue_ids(
@@ -61,6 +73,7 @@ def collect_inference_queue_ids(
     *,
     limit: int = 100,
     force_heuristic: bool = True,
+    include_gave_up: bool = False,
 ) -> list[str]:
     """All library items that still need real VLM (pending or failed→heuristic)."""
     limit = max(1, min(int(limit), 5000))
@@ -86,7 +99,7 @@ def collect_inference_queue_ids(
         heuristic = (
             db.query(MediaItem.id)
             .join(MediaAnalysis, MediaAnalysis.media_id == MediaItem.id)
-            .filter(_lib_filter(), _heuristic_filter())
+            .filter(_lib_filter(), _heuristic_filter(include_gave_up=include_gave_up))
             .order_by(MediaItem.created_at.asc())
             .limit(need)
             .all()
@@ -99,7 +112,9 @@ def collect_inference_queue_ids(
     return ids[:limit]
 
 
-def count_inference_queue(db: Session, *, force_heuristic: bool = True) -> dict[str, int]:
+def count_inference_queue(
+    db: Session, *, force_heuristic: bool = True, include_gave_up: bool = False
+) -> dict[str, int]:
     pending = (
         db.query(func.count(MediaItem.id))
         .outerjoin(MediaAnalysis, MediaAnalysis.media_id == MediaItem.id)
@@ -112,7 +127,7 @@ def count_inference_queue(db: Session, *, force_heuristic: bool = True) -> dict[
         heuristic = (
             db.query(func.count(MediaItem.id))
             .join(MediaAnalysis, MediaAnalysis.media_id == MediaItem.id)
-            .filter(_lib_filter(), _heuristic_filter())
+            .filter(_lib_filter(), _heuristic_filter(include_gave_up=include_gave_up))
             .scalar()
             or 0
         )
@@ -522,13 +537,17 @@ def _run_inference_job(job_id: str, media_ids: list[str]) -> None:
         # After release, continue draining heuristic/failed queue
         if chain_next:
             try:
-                _chain_remaining_inference()
+                _chain_remaining_inference(previous_ids=media_ids)
             except Exception as chain_exc:  # noqa: BLE001
                 log.warning("inference_chain_failed", error=str(chain_exc))
 
 
-def _chain_remaining_inference() -> None:
-    """If VLM is on and heuristics remain, start the next batch immediately."""
+def _chain_remaining_inference(*, previous_ids: list[str] | None = None) -> None:
+    """If VLM is on and heuristics remain, start the next batch immediately.
+
+    Stops when the only remaining IDs were just processed (persistent failures)
+    so we do not spawn infinite identical jobs.
+    """
     settings = get_settings()
     if not settings.vlm_enabled:
         return
@@ -554,6 +573,14 @@ def _chain_remaining_inference() -> None:
             session, limit=batch, force_heuristic=True
         )
     if not ids:
+        return
+    prev = set(previous_ids or [])
+    if prev and set(ids).issubset(prev):
+        log.info(
+            "inference_chain_stopped_no_progress",
+            remaining=remaining,
+            batch=len(ids),
+        )
         return
     log.info("inference_chain_next", remaining=remaining, batch=len(ids))
     start_inference_job(ids, force_heuristic=True, reason="chain")
