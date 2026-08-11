@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "neuraldisc"
-version = "0.3.0"
+version = "0.3.1"
 description = "Fully autonomous, local-first photo & video library for Apple Silicon"
 requires-python = ">=3.12"
 license = { text = "MIT" }

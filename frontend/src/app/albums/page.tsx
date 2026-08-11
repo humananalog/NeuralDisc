@@ -205,12 +205,19 @@ export default function AlbumsPage() {
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
               {filtered.map((a) => (
-                <button
+                <div
                   key={a.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => void openAlbum(a)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      void openAlbum(a);
+                    }
+                  }}
                   className={cn(
-                    "group overflow-hidden rounded-lg border bg-[var(--bg-elevated)] text-left transition-colors",
+                    "group cursor-pointer overflow-hidden rounded-lg border bg-[var(--bg-elevated)] text-left transition-colors",
                     active?.id === a.id
                       ? "border-[var(--accent)] ring-1 ring-[var(--accent)]/40"
                       : "border-[var(--border)] hover:border-[var(--border-strong)]",
@@ -269,7 +276,7 @@ export default function AlbumsPage() {
                       </p>
                     )}
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           )}

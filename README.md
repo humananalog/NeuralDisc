@@ -2,7 +2,7 @@
 
 **Fully autonomous, local-first photo & video library for Apple Silicon.**
 
-**Current release: [v0.3.0](RELEASE_NOTES.md)** · [Changelog](CHANGELOG.md)
+**Current release: [v0.3.1](CHANGELOG.md)** · [Changelog](CHANGELOG.md)
 
 NeuralDisc transforms decades of personal media locked on physical DVDs and CDs into a modern, searchable, Lightroom-class digital archive — completely offline, privacy-first, and purpose-built for Apple Silicon.
 
