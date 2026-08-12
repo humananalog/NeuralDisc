@@ -5,6 +5,7 @@ import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { ImportModal } from "./ImportModal";
 import { ImportLivePanel } from "./ImportLivePanel";
+import { DiscReadyDialog } from "./DiscReadyDialog";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 
@@ -49,6 +50,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <ImportModal />
       <ImportLivePanel />
+      <DiscReadyDialog />
     </div>
   );
 }

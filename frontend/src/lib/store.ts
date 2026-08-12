@@ -13,6 +13,15 @@ export type LiveImport = {
   dismissed: boolean;
 };
 
+/** Shown when a disc copy finishes — ask next disc vs finished */
+export type DiscReadyPrompt = {
+  jobId: string;
+  label: string;
+  copied: number;
+  bytesCopied: number;
+  total: number;
+};
+
 type AppState = {
   selectedIds: Set<string>;
   activeId: string | null;
@@ -46,6 +55,11 @@ type AppState = {
   libraryEpoch: number;
   lastPromotedTotal: number;
 
+  /** Modal after disc copy completes */
+  discReadyPrompt: DiscReadyPrompt | null;
+  /** Job IDs already shown the next-disc prompt this session */
+  discReadyAck: Set<string>;
+
   select: (id: string, multi?: boolean, range?: boolean, orderedIds?: string[]) => void;
   clearSelection: () => void;
   setActive: (id: string | null) => void;
@@ -74,7 +88,21 @@ type AppState = {
   bumpLibrary: () => void;
   setLastPromotedTotal: (n: number) => void;
   hasActiveImport: () => boolean;
+
+  clearDiscReadyPrompt: () => void;
+  /** Open import picker for the next disc */
+  continueNextDisc: () => void;
+  /** User is done inserting discs for now */
+  finishDiscSession: () => void;
 };
+
+function isDiscCopyReady(status: ImportStatus | null | undefined): boolean {
+  if (!status) return false;
+  if (status.status === "failed" || status.status === "cancelled") return false;
+  if (status.disc_ready) return true;
+  if (status.phase === "copied") return true;
+  return status.status === "completed" && Boolean(status.copy_only);
+}
 
 export const useAppStore = create<AppState>((set, get) => ({
   selectedIds: new Set(),
@@ -92,6 +120,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   liveImports: [],
   libraryEpoch: 0,
   lastPromotedTotal: 0,
+  discReadyPrompt: null,
+  discReadyAck: new Set(),
 
   select: (id, multi = false, range = false, orderedIds = []) => {
     const { selectedIds, activeId } = get();
@@ -156,13 +186,33 @@ export const useAppStore = create<AppState>((set, get) => ({
       const prev = s.liveImports.find((j) => j.jobId === jobId);
       const prevPromoted = prev?.status?.promoted ?? 0;
       const nextPromoted = status.promoted ?? 0;
-      const shouldBump = nextPromoted > prevPromoted || nextPromoted > s.lastPromotedTotal;
+      const shouldBump =
+        nextPromoted > prevPromoted || nextPromoted > s.lastPromotedTotal;
+
+      const wasReady = isDiscCopyReady(prev?.status);
+      const nowReady = isDiscCopyReady(status);
+      const shouldPrompt =
+        nowReady &&
+        !wasReady &&
+        !s.discReadyAck.has(jobId) &&
+        !(prev?.dismissed) &&
+        !s.discReadyPrompt;
+
       return {
         liveImports: s.liveImports.map((j) =>
           j.jobId === jobId ? { ...j, status } : j,
         ),
         libraryEpoch: shouldBump ? s.libraryEpoch + 1 : s.libraryEpoch,
         lastPromotedTotal: Math.max(s.lastPromotedTotal, nextPromoted),
+        discReadyPrompt: shouldPrompt
+          ? {
+              jobId,
+              label: prev?.label || status.message || "Disc",
+              copied: status.copied ?? 0,
+              bytesCopied: status.bytes_copied ?? 0,
+              total: status.total ?? 0,
+            }
+          : s.discReadyPrompt,
       };
     }),
 
@@ -171,6 +221,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       liveImports: s.liveImports.map((j) =>
         j.jobId === jobId ? { ...j, dismissed: true } : j,
       ),
+      discReadyPrompt:
+        s.discReadyPrompt?.jobId === jobId ? null : s.discReadyPrompt,
     })),
 
   bumpLibrary: () => set((s) => ({ libraryEpoch: s.libraryEpoch + 1 })),
@@ -184,4 +236,38 @@ export const useAppStore = create<AppState>((set, get) => ({
         j.status.status !== "failed" &&
         j.status.status !== "cancelled",
     ),
+
+  clearDiscReadyPrompt: () => set({ discReadyPrompt: null }),
+
+  continueNextDisc: () => {
+    const prompt = get().discReadyPrompt;
+    if (!prompt) {
+      set({ importOpen: true, importMinimized: false });
+      return;
+    }
+    const ack = new Set(get().discReadyAck);
+    ack.add(prompt.jobId);
+    set({
+      discReadyAck: ack,
+      discReadyPrompt: null,
+      importOpen: true,
+      importMinimized: false,
+    });
+  },
+
+  finishDiscSession: () => {
+    const prompt = get().discReadyPrompt;
+    const ack = new Set(get().discReadyAck);
+    if (prompt) ack.add(prompt.jobId);
+    set((s) => ({
+      discReadyAck: ack,
+      discReadyPrompt: null,
+      liveImports: prompt
+        ? s.liveImports.map((j) =>
+            j.jobId === prompt.jobId ? { ...j, dismissed: true } : j,
+          )
+        : s.liveImports,
+      libraryEpoch: s.libraryEpoch + 1,
+    }));
+  },
 }));

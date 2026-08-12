@@ -273,8 +273,7 @@ export function ImportLivePanel() {
                   )}
                   {(copyDone || s.disc_ready) && (
                     <div className="rounded-md border border-[var(--success)]/30 bg-[var(--success)]/10 px-2 py-1.5 text-[10px] text-[var(--success)]">
-                      Disc free — insert next disc. Classification continues in
-                      background.
+                      Copy finished — disc is free to eject.
                     </div>
                   )}
                   {processHint && (
@@ -291,6 +290,32 @@ export function ImportLivePanel() {
               )}
 
               <div className="flex flex-wrap gap-2 pt-0.5">
+                {!running && (copyDone || s?.disc_ready) && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => useAppStore.getState().continueNextDisc()}
+                      className="inline-flex flex-1 items-center justify-center rounded-md bg-[var(--accent)] px-2 py-1.5 text-[11px] font-medium text-white hover:bg-[var(--accent-hover)]"
+                    >
+                      Next disc
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const st = useAppStore.getState();
+                        if (st.discReadyPrompt?.jobId === job.jobId) {
+                          st.finishDiscSession();
+                        } else {
+                          dismissLiveImport(job.jobId);
+                          bumpLibrary();
+                        }
+                      }}
+                      className="inline-flex flex-1 items-center justify-center rounded-md border border-[var(--border)] px-2 py-1.5 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                    >
+                      Finished
+                    </button>
+                  </>
+                )}
                 {running && (
                   <button
                     type="button"
@@ -302,7 +327,6 @@ export function ImportLivePanel() {
                         updateLiveImport(job.jobId, st);
                       } catch {
                         try {
-                          // Force close if soft cancel left us stuck
                           await api.cancelJob(job.jobId, { force: true });
                           const st = await api.importStatus(job.jobId);
                           updateLiveImport(job.jobId, st);
@@ -316,14 +340,16 @@ export function ImportLivePanel() {
                     {s?.cancel_requested ? "Force cancel" : "Cancel job"}
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => expandImport()}
-                  className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-                  title="Open import dialog (another disc)"
-                >
-                  Import more
-                </button>
+                {!running && !(copyDone || s?.disc_ready) && (
+                  <button
+                    type="button"
+                    onClick={() => expandImport()}
+                    className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                    title="Open import dialog (another disc)"
+                  >
+                    Import more
+                  </button>
+                )}
                 <Link
                   href="/library"
                   onClick={() => bumpLibrary()}
@@ -342,7 +368,6 @@ export function ImportLivePanel() {
                   </Link>
                 )}
               </div>
-            </div>
           </div>
         );
       })}

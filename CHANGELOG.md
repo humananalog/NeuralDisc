@@ -5,6 +5,11 @@ All notable changes to NeuralDisc are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.9] — 2026-08-12
+
+### Added
+- **Disc ready** sheet after copy completes: Apple-style prompt to insert the next disc or finish; live dock Next disc / Finished actions
+
 ## [0.3.8] — 2026-08-12
 
 ### Fixed
@@ -150,6 +155,7 @@ First full application release: local library backend, Next.js UI, high-throughp
 
 ---
 
+[0.3.9]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.9
 [0.3.8]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.8
 [0.3.7]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.7
 [0.3.6]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.6
