@@ -61,7 +61,11 @@ def test_rejects_tiny_image(library, tmp_path: Path):
     assert "vector_or_blocked" in codes
 
     with session_scope() as session:
-        items = session.query(MediaItem).filter(MediaItem.hitl_status == "pending").all()
+        items = (
+            session.query(MediaItem)
+            .filter(MediaItem.lifecycle == "library")
+            .all()
+        )
         assert len(items) == 1
         assert items[0].filename == "good_photo.jpg"
 
