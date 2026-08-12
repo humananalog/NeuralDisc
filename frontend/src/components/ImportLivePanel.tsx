@@ -368,6 +368,7 @@ export function ImportLivePanel() {
                   </Link>
                 )}
               </div>
+            </div>
           </div>
         );
       })}
