@@ -152,9 +152,9 @@ This is the primary work surface after a disc is processed.
 - Right: AI analysis panel + action buttons
 - Bottom: filmstrip of current queue page
 
-**Actions (keyboard-first — Library grid & lightbox)**
+**Actions (keyboard-first — all media grids & lightbox)**
 
-Same Lightroom-style map everywhere media is selected (`?` shows the cheat sheet):
+Same Lightroom-style map wherever media can be selected: **Library**, **Grid**, **Timeline**, **Map**, **Collections** album view, and lightbox (`?` shows the cheat sheet):
 
 | Key | Action |
 |-----|--------|

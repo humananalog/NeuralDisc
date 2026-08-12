@@ -18,6 +18,7 @@ import { api, type Album, type MediaItem } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
 import { useMediaShortcuts } from "@/hooks/useMediaShortcuts";
+import { mergeRotatedMediaItems } from "@/lib/mediaPatch";
 import { MediaLightbox } from "@/components/MediaLightbox";
 import { ShortcutsHelp } from "@/components/ShortcutsHelp";
 
@@ -156,8 +157,7 @@ export default function AlbumsPage() {
     onRotate: async (ids, mode) => {
       try {
         const res = await api.batchRotateMedia(ids, mode, true);
-        const byId = new Map(res.items.map((m) => [m.id, m]));
-        setMedia((prev) => prev.map((x) => byId.get(x.id) ?? x));
+        setMedia((prev) => mergeRotatedMediaItems(prev, res.items));
         bumpLibrary();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Rotate failed");

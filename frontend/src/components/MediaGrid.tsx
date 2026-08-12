@@ -5,6 +5,7 @@ import { Trash2, Sparkles, RefreshCw, RotateCw, RotateCcw } from "lucide-react";
 import { api, type MediaItem } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { useMediaShortcuts, type RotateMode } from "@/hooks/useMediaShortcuts";
+import { mergeRotatedMediaItems } from "@/lib/mediaPatch";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { DetailPanel } from "./DetailPanel";
 import { DeleteConfirmModal } from "./DeleteConfirmModal";
@@ -173,31 +174,13 @@ export function MediaGrid({ sort = "taken_at_desc" }: { sort?: string }) {
   }, []);
 
   function applyRotatedMedia(updated: MediaItem[]) {
-    const now = Date.now();
-    const byId = new Map(updated.map((m) => [m.id, m]));
     setThumbEpoch((prev) => {
       const next = { ...prev };
+      const now = Date.now();
       for (const m of updated) next[m.id] = (next[m.id] || 0) + 1 + (now % 1000);
       return next;
     });
-    setItems((prev) =>
-      prev.map((x) => {
-        const u = byId.get(x.id);
-        if (!u) return x;
-        const stamp = u.updated_at || new Date().toISOString();
-        const bump = (url?: string | null) => {
-          if (!url) return url;
-          const base = url.split("?")[0];
-          return `${base}?v=${encodeURIComponent(stamp)}&t=${now}`;
-        };
-        return {
-          ...u,
-          updated_at: stamp,
-          thumb_url: bump(u.thumb_url) ?? u.thumb_url,
-          preview_url: bump(u.preview_url) ?? u.preview_url,
-        };
-      }),
-    );
+    setItems((prev) => mergeRotatedMediaItems(prev, updated));
   }
 
   const patchItems = useCallback((updated: MediaItem[]) => {

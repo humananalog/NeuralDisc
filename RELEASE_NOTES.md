@@ -1,6 +1,6 @@
 # Release Notes
 
-**Current: [v0.3.11](CHANGELOG.md)** — ports **API :8020** / **UI :3020**, auto-eject, disc-ready UI, optical fast-scan, auto-resume after crash, ViniMidas MLX lease. Full ops: **[docs/RUNBOOK.md](docs/RUNBOOK.md)**.
+**Current: [v0.3.12](CHANGELOG.md)** — ports **API :8020** / **UI :3020**, auto-eject, disc-ready UI, optical fast-scan, auto-resume after crash, ViniMidas MLX lease, media shortcuts on all grids. Full ops: **[docs/RUNBOOK.md](docs/RUNBOOK.md)**.
 
 ---
 

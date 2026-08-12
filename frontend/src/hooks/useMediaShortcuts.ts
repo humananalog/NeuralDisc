@@ -33,7 +33,8 @@ type Options = {
 
 /**
  * App-wide Lightroom-style media keys (rate, flag, rotate, nav, delete).
- * Safe to mount from MediaGrid; skips when typing or a blocking dialog is open.
+ * Mount from MediaGrid / useMediaViewShortcuts (Timeline, Map, …).
+ * Skips when typing or a blocking dialog is open.
  */
 export function useMediaShortcuts(opts: Options) {
   const optsRef = useRef(opts);
