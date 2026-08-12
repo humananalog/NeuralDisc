@@ -149,8 +149,18 @@ def accept() -> QualityVerdict:
     return QualityVerdict(accepted=True)
 
 
-def evaluate_path(path: Path, settings: Settings) -> QualityVerdict:
-    """Cheap pre-copy checks (extension, size, path heuristics)."""
+def evaluate_path(
+    path: Path,
+    settings: Settings,
+    *,
+    probe_dimensions: bool = True,
+) -> QualityVerdict:
+    """Pre-copy checks (extension, size, path heuristics).
+
+    ``probe_dimensions=False`` skips PIL header reads — use on optical /
+    network sources so copy-first can finish and free the drive. Dimension
+    gates still run after copy on the library SSD.
+    """
     ext = path.suffix.lower()
 
     if ext in BLOCKED_EXTENSIONS:
@@ -210,7 +220,7 @@ def evaluate_path(path: Path, settings: Settings) -> QualityVerdict:
     # Fast image header probe — dimension gates beat raw byte size
     # (solid-colour test fixtures can be large in pixels but small on disk)
     dim: tuple[int, int] | None = None
-    if ext in {
+    if probe_dimensions and ext in {
         ".jpg",
         ".jpeg",
         ".png",

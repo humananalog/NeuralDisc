@@ -40,7 +40,7 @@ class KeepBestBatchRequest(BaseModel):
 @router.get("/summary")
 def get_duplicate_summary(db: Session = Depends(get_db)) -> dict:
     """Top counts for the Duplicates page header and nav badge."""
-    out = duplicate_summary(db)
+    out = duplicate_summary(db, prune=True)
     db.commit()  # persist prune from summary
     return out
 

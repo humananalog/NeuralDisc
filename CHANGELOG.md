@@ -5,6 +5,13 @@ All notable changes to NeuralDisc are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.11] — 2026-08-12
+
+### Fixed
+- Optical import scan no longer PIL-probes every JPEG on the disc (dimension gates run after copy on SSD) — unblocks copy-first / disc rotation
+- Nav/stats polls no longer prune duplicate groups every few seconds (SQLite contention that made scans look frozen)
+- Scan progress updates every 5 files so the live panel does not look stale mid-scan
+
 ## [0.3.10] — 2026-08-12
 
 ### Added

@@ -199,11 +199,13 @@ Solo Mac without ViniMidas: leave the secret unset (or `NEURALDISC_MLX_LEASE_REQ
 1. **Cancel** — cooperative stop between files.  
 2. **Resume** — interrupted imports: drain staging + re-scan, skip existing SHA-256.  
 3. **Clear stale / Reap orphans** — close `running`/`queued` rows with no live worker (e.g. after API restart). Safe: library media stays.  
-4. **Auto-resume supervisor** (default on) — every ~30s and on API start:  
+4. **Auto-resume supervisor** (default on) — every ~30s and on API start (covers crash / LaunchAgent restart):  
    - wake staging processor if `lifecycle=staging` rows remain  
    - resume interrupted/failed **import** jobs (one at a time)  
    - re-queue interrupted **post_ingest**  
-   - when VLM is enabled, start **inference** batches for pending/heuristic library items (cooldown 2 min)  
+   - when VLM is enabled, start **inference** batches for pending/heuristic library items  
+
+Optical scan uses cheap size/path gates only; dimension quality gates run after copy on the library SSD so the drive is not stalled by PIL.
 
 ```bash
 # Toggle
@@ -212,8 +214,8 @@ export NEURALDISC_AUTO_RESUME_INFERENCE=true
 export NEURALDISC_AUTO_RESUME_INTERVAL_SEC=30
 
 # Inspect / nudge
-curl -s http://127.0.0.1:8000/api/jobs/supervisor
-curl -s -X POST http://127.0.0.1:8000/api/jobs/supervisor/tick
+curl -s http://127.0.0.1:8020/api/jobs/supervisor
+curl -s -X POST http://127.0.0.1:8020/api/jobs/supervisor/tick
 ```
 
 ### Cancel a job

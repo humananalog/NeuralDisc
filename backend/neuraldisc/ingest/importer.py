@@ -736,7 +736,10 @@ def _import_one_source(
         if settings.quality_enabled:
             if _cancelled(progress):
                 raise ImportCancelled()
-            verdict = evaluate_path(src, settings)
+            # Optical / remote mounts: skip PIL dimension probes — they stall
+            # disc rotation. Full quality gates run after copy on the SSD.
+            probe_dims = not str(path).startswith("/Volumes")
+            verdict = evaluate_path(src, settings, probe_dimensions=probe_dims)
             if verdict.rejected:
                 progress.rejected += 1
                 sample = f"{src.name}: {verdict.code} — {verdict.reason}"
@@ -747,12 +750,13 @@ def _import_one_source(
         if mtype is None:
             continue
         work.append((src, rel, mtype))
-        if i % 25 == 0:
+        if i % 5 == 0 or i + 1 == len(candidates):
             progress.message = (
                 f"Scanning {name}… {i + 1}/{len(candidates)} "
                 f"({len(work)} queued, {progress.rejected} rejected)"
             )
-            _sync_job(progress.job_id, progress)
+            if i % 25 == 0:
+                _sync_job(progress.job_id, progress)
 
     # Archives on disc (zip/tar/…) that contain photos/videos → expand on target SSD
     if settings.import_expand_archives:

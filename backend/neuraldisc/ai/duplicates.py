@@ -583,13 +583,18 @@ def list_duplicate_groups(
     return out
 
 
-def duplicate_summary(session: Session) -> dict:
-    """Top-line counts for the Duplicates page header / sidebar badge."""
+def duplicate_summary(session: Session, *, prune: bool = True) -> dict:
+    """Top-line counts for the Duplicates page header / sidebar badge.
+
+    ``prune=False`` for hot paths (nav / stats polls) — pruning walks every
+    group and must not run on a 2s UI timer during imports.
+    """
     # Prune ghosts first so counts match what the list returns
-    try:
-        prune_resolved_duplicate_groups(session)
-    except Exception as exc:  # noqa: BLE001
-        log.debug("prune_on_summary_failed", error=str(exc))
+    if prune:
+        try:
+            prune_resolved_duplicate_groups(session)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("prune_on_summary_failed", error=str(exc))
     groups = list_duplicate_groups(session, include_resolved=True, prune=False)
     active_groups = 0
     resolved_groups = 0

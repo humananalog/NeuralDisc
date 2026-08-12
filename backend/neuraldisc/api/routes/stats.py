@@ -97,11 +97,10 @@ def get_stats(db: Session = Depends(get_db)) -> StatsOut:
         or 0
     )
 
-    # Active duplicate groups (alive members ≥ 2) — light count via is_duplicate flag groups
-    # Prefer summary-style: media marked duplicate is cheaper than walking groups here
+    # Active duplicate groups — do not prune on this hot path
     from neuraldisc.ai.duplicates import duplicate_summary
 
-    dup_sum = duplicate_summary(db)
+    dup_sum = duplicate_summary(db, prune=False)
 
     return StatsOut(
         total_media=total,
@@ -179,10 +178,18 @@ def get_nav_counts(db: Session = Depends(get_db)) -> NavCountsOut:
         db.query(func.count(MediaItem.id)).filter(MediaItem.lifecycle == "trash").scalar() or 0
     )
 
-    from neuraldisc.ai.duplicates import duplicate_summary
+    from neuraldisc.db.models import DuplicateMember
 
-    dup_sum = duplicate_summary(db)
-    duplicates = int(dup_sum.get("active_groups") or 0)
+    # Light active-group count — never call duplicate_summary/prune on nav poll
+    alive_groups = (
+        db.query(DuplicateMember.group_id)
+        .join(MediaItem, MediaItem.id == DuplicateMember.media_id)
+        .filter(~MediaItem.lifecycle.in_(("trash", "rejected")))
+        .group_by(DuplicateMember.group_id)
+        .having(func.count(DuplicateMember.media_id) >= 2)
+        .subquery()
+    )
+    duplicates = db.query(func.count()).select_from(alive_groups).scalar() or 0
 
     # Settings: count configured secrets (HF etc.)
     try:
