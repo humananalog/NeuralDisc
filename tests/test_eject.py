@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from neuraldisc.ingest.detector import eject_volume
+from neuraldisc.ingest.detector import eject_volume, start_eject_volume
 
 
 def test_eject_refuses_non_volumes_path(tmp_path: Path) -> None:
@@ -45,3 +46,20 @@ def test_eject_calls_diskutil() -> None:
         result = eject_volume("/Volumes/TestDiscOptical")
     assert result["ok"] is True
     assert run.called
+
+
+def test_start_eject_is_non_blocking() -> None:
+    fake = Path("/Volumes/TestDiscOptical")
+
+    with (
+        patch("neuraldisc.ingest.detector.eject_volume") as eject,
+        patch.object(Path, "exists", return_value=True),
+        patch.object(Path, "resolve", return_value=fake),
+        patch.object(Path, "is_file", return_value=True),
+    ):
+        eject.return_value = {"ok": True, "path": str(fake)}
+        result = start_eject_volume("/Volumes/TestDiscOptical")
+        assert result["ok"] is True
+        assert result.get("started") is True
+        time.sleep(0.15)
+        assert eject.called

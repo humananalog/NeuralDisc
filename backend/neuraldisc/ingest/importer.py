@@ -1044,15 +1044,16 @@ def _import_one_source(
                 info = probe_volume(vol)
                 # Only optical — never auto-eject USB / external HDDs
                 if info.is_optical or info.kind == "optical":
-                    from neuraldisc.ingest.detector import eject_volume
+                    from neuraldisc.ingest.detector import start_eject_volume
 
-                    result = eject_volume(vol)
+                    # Never block the copy worker on diskutil (can hang minutes)
+                    result = start_eject_volume(vol)
                     if result.get("ok"):
                         ejected = True
                         if str(vol) not in progress.ejected_paths:
                             progress.ejected_paths.append(str(vol))
                         log.info(
-                            "optical_auto_ejected",
+                            "optical_auto_eject_started",
                             path=str(vol),
                             name=name,
                             job_id=progress.job_id,

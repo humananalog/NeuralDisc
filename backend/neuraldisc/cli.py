@@ -182,6 +182,8 @@ def serve(
         host=host,
         port=port,
         reload=reload,
+        timeout_keep_alive=30,
+        limit_concurrency=100,
     )
 
 

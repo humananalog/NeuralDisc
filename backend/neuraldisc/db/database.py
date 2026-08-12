@@ -65,13 +65,19 @@ def init_engine(settings: Settings | None = None) -> Engine:
     @event.listens_for(_engine, "connect")
     def _set_sqlite_pragma(dbapi_conn, connection_record):  # type: ignore[no-untyped-def]
         cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=120000")
-        cursor.execute("PRAGMA temp_store=MEMORY")
-        cursor.execute("PRAGMA wal_autocheckpoint=1000")
-        cursor.close()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+        except Exception as exc:  # noqa: BLE001
+            # Transient "unable to open database file" under connection storms
+            log.warning("sqlite_wal_pragma_failed", error=str(exc)[:200])
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=120000")
+            cursor.execute("PRAGMA temp_store=MEMORY")
+            cursor.execute("PRAGMA wal_autocheckpoint=1000")
+        finally:
+            cursor.close()
 
     _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
     return _engine

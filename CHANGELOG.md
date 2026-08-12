@@ -5,6 +5,11 @@ All notable changes to NeuralDisc are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.15] — 2026-08-12
+
+### Fixed
+- Disc eject no longer blocks the API: `diskutil` runs in a background thread (stuck tray previously wedged uvicorn → mass Internal Server Errors / `unable to open database file`)
+
 ## [0.3.14] — 2026-08-12
 
 ### Fixed

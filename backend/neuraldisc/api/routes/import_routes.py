@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from neuraldisc.ingest.detector import eject_volume, list_mounted_volumes
+from neuraldisc.ingest.detector import list_mounted_volumes, start_eject_volume
 from neuraldisc.ingest.importer import (
     ImportSource,
     get_import_progress,
@@ -84,10 +84,10 @@ class EjectRequest(BaseModel):
 def eject_import_volume(body: EjectRequest) -> dict:
     """Eject / unmount a volume after copy so the optical drive is free.
 
-    Safe once files are on the library SSD (copy-only pipeline). Refuses
-    non-/Volumes and system volumes.
+    Runs ``diskutil`` in a background thread so a stuck tray never wedges
+    the API (which previously caused mass Internal Server Errors).
     """
-    result = eject_volume(body.path, force=body.force)
+    result = start_eject_volume(body.path, force=body.force)
     if not result.get("ok"):
         raise HTTPException(400, result.get("error") or "eject failed")
     return result

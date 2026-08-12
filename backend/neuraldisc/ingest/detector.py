@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,7 @@ _DISKUTIL = next(
     (p for p in ("/usr/sbin/diskutil", "/sbin/diskutil") if Path(p).is_file()),
     "diskutil",
 )
+_EJECT_TIMEOUT_SEC = 20.0
 
 
 def _diskutil_cmd(*args: str) -> list[str]:
@@ -293,7 +295,7 @@ def eject_volume(path: Path | str, *, force: bool = False) -> dict[str, Any]:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=_EJECT_TIMEOUT_SEC,
                 check=False,
             )
         except FileNotFoundError:
@@ -320,6 +322,61 @@ def eject_volume(path: Path | str, *, force: bool = False) -> dict[str, Any]:
 
     log.warning("volume_eject_failed", path=str(p), error=last_err[:300])
     return {"ok": False, "path": str(p), "error": last_err[:400]}
+
+
+def start_eject_volume(path: Path | str, *, force: bool = False) -> dict[str, Any]:
+    """Start eject in a daemon thread — never block the API event loop.
+
+    ``diskutil eject`` can hang for a long time on optical drives; running it
+    inline wedged the whole FastAPI process (mass 500s).
+    """
+    p = Path(path).expanduser()
+    mount_name = p.name.lower()
+    if mount_name in _SKIP_VOLUME_NAMES or mount_name == "macintosh hd":
+        return {"ok": False, "path": str(p), "error": "refusing to eject system volume"}
+    raw = str(p)
+    if not raw.startswith("/Volumes/") and not raw.startswith("/Volumes"):
+        return {
+            "ok": False,
+            "path": raw,
+            "error": "refusing to eject non-/Volumes path",
+        }
+    try:
+        resolved = p.resolve()
+    except OSError:
+        resolved = p
+    if not str(resolved).startswith("/Volumes/"):
+        # Still allow if original was under /Volumes and already unmounted
+        if not p.exists() and raw.startswith("/Volumes/"):
+            return {"ok": True, "path": raw, "already_unmounted": True}
+        return {
+            "ok": False,
+            "path": str(resolved),
+            "error": "refusing to eject non-/Volumes path",
+        }
+    if not p.exists() and not resolved.exists():
+        return {"ok": True, "path": raw, "already_unmounted": True}
+
+    target = str(resolved if str(resolved).startswith("/Volumes/") else p)
+
+    def _run() -> None:
+        try:
+            result = eject_volume(target, force=force)
+            log.info("background_eject_finished", **{k: result.get(k) for k in ("ok", "path", "error", "cmd")})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("background_eject_error", path=target, error=str(exc))
+
+    threading.Thread(
+        target=_run,
+        name=f"eject-{Path(target).name[:40]}",
+        daemon=True,
+    ).start()
+    return {
+        "ok": True,
+        "started": True,
+        "path": target,
+        "message": "Eject started in background",
+    }
 
 
 class VolumeWatcher:
