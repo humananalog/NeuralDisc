@@ -140,21 +140,24 @@ def session_scope() -> Generator[Session, None, None]:
 
 
 def get_db() -> Generator[Session, None, None]:
-    """FastAPI dependency — shares the process-wide write lock."""
+    """FastAPI dependency.
+
+    Do **not** hold the write lock for the whole request (nav polls would
+    starve import/staging). Serialize only the final commit.
+    """
     if _SessionLocal is None:
         init_engine()
     assert _SessionLocal is not None
-    _WRITE_LOCK.acquire()
     session = _SessionLocal()
     try:
         yield session
-        session.commit()
+        with _WRITE_LOCK:
+            session.commit()
     except Exception:
         session.rollback()
         raise
     finally:
         session.close()
-        _WRITE_LOCK.release()
 
 
 def reset_engine() -> None:

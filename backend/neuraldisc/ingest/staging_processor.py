@@ -186,7 +186,7 @@ def _mark_staging_failed(media_id: str, reason: str) -> None:
 def _process_loop(settings: Settings) -> None:
     global _STATE
     workers = max(1, settings.import_process_workers)
-    claim = max(1, settings.import_process_claim)
+    claim = max(1, min(8, settings.import_process_claim)) if workers <= 1 else max(1, settings.import_process_claim)
 
     with _LOCK:
         if _STATE is None:
