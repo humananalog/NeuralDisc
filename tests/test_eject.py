@@ -33,7 +33,8 @@ def test_eject_calls_diskutil() -> None:
     fake = Path("/Volumes/TestDiscOptical")
 
     def fake_run(cmd, **_kwargs):
-        assert cmd[:2] == ["diskutil", "eject"]
+        assert cmd[0].endswith("diskutil") or cmd[0] == "diskutil"
+        assert cmd[1] == "eject"
         return SimpleNamespace(returncode=0, stdout="Disk ejected", stderr="")
 
     with (

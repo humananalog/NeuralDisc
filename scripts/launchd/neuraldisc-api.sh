@@ -8,7 +8,7 @@ VENV="$BACKEND/.venv/bin"
 LOG_DIR="$HOME/logs/neuraldisc"
 mkdir -p "$LOG_DIR"
 
-export PATH="$VENV:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH="$VENV:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export NEURALDISC_LIBRARY_ROOT="${NEURALDISC_LIBRARY_ROOT:-$ROOT/data/NeuralDisc}"
 export NEURALDISC_MLX_PEER_ID="${NEURALDISC_MLX_PEER_ID:-neuraldisc}"
 export NEURALDISC_API_HOST=127.0.0.1

@@ -6,7 +6,7 @@ ROOT="/Users/alexclaw/Projects/NeuralDisc"
 FRONTEND="$ROOT/frontend"
 mkdir -p "$HOME/logs/neuraldisc"
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:$FRONTEND/node_modules/.bin:/usr/bin:/bin"
+export PATH="/opt/homebrew/bin:/usr/local/bin:$FRONTEND/node_modules/.bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export NEURALDISC_API_URL="${NEURALDISC_API_URL:-http://127.0.0.1:8020}"
 export HOSTNAME=127.0.0.1
 export PORT=3020

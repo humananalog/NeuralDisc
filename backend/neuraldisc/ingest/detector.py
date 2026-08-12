@@ -13,6 +13,16 @@ from neuraldisc.utils.logging import get_logger
 
 log = get_logger(__name__)
 
+# LaunchAgents often omit /usr/sbin — always prefer absolute path
+_DISKUTIL = next(
+    (p for p in ("/usr/sbin/diskutil", "/sbin/diskutil") if Path(p).is_file()),
+    "diskutil",
+)
+
+
+def _diskutil_cmd(*args: str) -> list[str]:
+    return [_DISKUTIL, *args]
+
 # Volumes that are never import sources
 _SKIP_VOLUME_NAMES = frozenset(
     {
@@ -102,7 +112,7 @@ def probe_volume(path: Path) -> VolumeInfo:
 
     try:
         proc = subprocess.run(
-            ["diskutil", "info", str(path)],
+            _diskutil_cmd("info", str(path)),
             capture_output=True,
             text=True,
             timeout=12,
@@ -263,11 +273,18 @@ def eject_volume(path: Path | str, *, force: bool = False) -> dict[str, Any]:
         return {"ok": True, "path": str(p), "already_unmounted": True}
 
     cmds: list[list[str]] = [
-        ["diskutil", "eject", str(p)],
-        ["diskutil", "unmountDisk", str(p)],
+        _diskutil_cmd("eject", str(p)),
+        _diskutil_cmd("unmountDisk", str(p)),
     ]
     if force:
-        cmds.insert(1, ["diskutil", "unmountDisk", "force", str(p)])
+        cmds.insert(1, _diskutil_cmd("unmountDisk", "force", str(p)))
+
+    if not Path(_DISKUTIL).is_file() and _DISKUTIL == "diskutil":
+        return {
+            "ok": False,
+            "path": str(p),
+            "error": "diskutil not found (expected /usr/sbin/diskutil)",
+        }
 
     last_err = ""
     for cmd in cmds:
@@ -279,6 +296,12 @@ def eject_volume(path: Path | str, *, force: bool = False) -> dict[str, Any]:
                 timeout=60,
                 check=False,
             )
+        except FileNotFoundError:
+            return {
+                "ok": False,
+                "path": str(p),
+                "error": f"diskutil not found at {_DISKUTIL}",
+            }
         except (OSError, subprocess.TimeoutExpired) as exc:
             last_err = str(exc)
             continue
