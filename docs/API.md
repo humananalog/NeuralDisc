@@ -1,7 +1,8 @@
 # NeuralDisc HTTP API
 
-Base URL (local): `http://127.0.0.1:8000`  
-Interactive docs: `http://127.0.0.1:8000/docs`
+Base URL (local Mac Mini): `http://127.0.0.1:8020`  
+Interactive docs: `http://127.0.0.1:8020/docs`  
+UI: `http://127.0.0.1:3020` (proxies `/api/*` → API)
 
 All responses are JSON unless serving media files. Frontend proxies `/api/*` via Next.js rewrites.
 
@@ -34,13 +35,15 @@ All responses are JSON unless serving media files. Frontend proxies `/api/*` via
 
 ## Import (copy-first)
 
-Default: **serial copy** to `library/staging`, then **background process**. Import job completes when copy finishes (`disc_ready`).
+Default: **serial copy** to `library/staging`, then **background process**. Import job completes when copy finishes (`disc_ready`); optical volumes may auto-eject (`ejected_paths`).
+
+Scan on `/Volumes` uses cheap size/path gates only. Dimension quality, VLM, promote, and duplicate grouping run on the library SSD after copy.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/import` | Start/enqueue copy job. Modes: `disc`, `media`, `folder`, `batch` |
 | GET | `/api/import/{job_id}` | Status (`phase`, `copied`, `disc_ready`, `copy_only`, `source_paths`, `ejected_paths`, …) |
-| POST | `/api/import/eject` | Eject/unmount a `/Volumes/…` path after copy |
+| POST | `/api/import/eject` | Body `{ path, force? }` — eject/unmount a `/Volumes/…` path after copy |
 | GET | `/api/import/live` | In-memory live copy jobs |
 | GET | `/api/import/suggestions/volumes` | Mounted volumes + media counts |
 | GET | `/api/import/process/status` | Background staging processor (pending, promoted session) |

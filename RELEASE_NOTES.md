@@ -1,8 +1,12 @@
 # Release Notes
 
+**Current: [v0.3.11](CHANGELOG.md)** — ports **API :8020** / **UI :3020**, auto-eject, disc-ready UI, optical fast-scan, auto-resume after crash, ViniMidas MLX lease. Full ops: **[docs/RUNBOOK.md](docs/RUNBOOK.md)**.
+
+---
+
 ## NeuralDisc v0.3.0 — Copy-first discs, inference, smart albums (2026-08-11)
 
-**Version: 0.3.0** (backend + UI)
+**Version: 0.3.0** (backend + UI) — historical baseline; prefer Changelog for 0.3.1+.
 
 ### Highlights
 
@@ -25,10 +29,10 @@ brew install ffmpeg python@3.12 exiftool
 cd backend && python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 neuraldisc init
-neuraldisc serve --host 127.0.0.1 --port 8000
+neuraldisc serve --host 127.0.0.1 --port 8020
 
 cd frontend && npm install && npm run dev -- --port 3020 --hostname 127.0.0.1
-# → http://127.0.0.1:3020
+# → http://127.0.0.1:3020  ·  API http://127.0.0.1:8020/docs
 ```
 
 Optional: `./scripts/dev.sh` · `NEURALDISC_LIBRARY_ROOT=/Volumes/YourSSD/NeuralDisc`  
@@ -48,7 +52,7 @@ VLM: Settings → enable VLM + HF token; `pip install -e ".[ai]"` if needed.
 
 | Service | Default |
 |---------|---------|
-| API + OpenAPI docs | http://127.0.0.1:8000 · `/docs` |
+| API + OpenAPI docs | http://127.0.0.1:8020 · `/docs` |
 | Web UI | http://127.0.0.1:3020 |
 
 ### Day-to-day disc workflow

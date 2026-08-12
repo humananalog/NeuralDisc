@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Nav/stats polls no longer prune duplicate groups every few seconds (SQLite contention that made scans look frozen)
 - Scan progress updates every 5 files so the live panel does not look stale mid-scan
 
+### Docs
+- RUNBOOK / API / README / RELEASE_NOTES: API **:8020**, copy-first + auto-eject + optical fast-scan + crash auto-resume
+
 ## [0.3.10] — 2026-08-12
 
 ### Added

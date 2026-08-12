@@ -71,15 +71,15 @@ neuraldisc ingest /Volumes/MY_DISC
 neuraldisc ingest ./data/sample_disc --name SAMPLE
 neuraldisc watch
 neuraldisc volumes
-neuraldisc serve --host 127.0.0.1 --port 8000
+neuraldisc serve --host 127.0.0.1 --port 8020
 neuraldisc stats
 ```
 
 ## Web UI
 
 ```bash
-# Terminal 1
-neuraldisc serve --host 127.0.0.1 --port 8000
+# Terminal 1 — prefer LaunchAgents on the Mac Mini (see Local ports)
+neuraldisc serve --host 127.0.0.1 --port 8020
 
 # Terminal 2
 cd frontend && npm run dev -- --port 3020 --hostname 127.0.0.1
@@ -91,22 +91,24 @@ Or: `./scripts/dev.sh`
 | Service | URL |
 |---------|-----|
 | UI | http://127.0.0.1:3020 |
-| API | http://127.0.0.1:8000 |
-| OpenAPI | http://127.0.0.1:8000/docs |
+| API | http://127.0.0.1:8020 |
+| OpenAPI | http://127.0.0.1:8020/docs |
 
 ## Day-to-day workflows
 
 ### Import a disc (copy-first)
 
-Default pipeline (`import_copy_only=true`, `import_copy_serial=true`):
+Default pipeline (`import_copy_only=true`, `import_copy_serial=true`, `auto_eject=true`):
 
 1. Insert disc (or open Import → select volume/folder). Prefer **full disc** for optical media.  
-2. Scan finds loose media **and** archives (zip/tar/…). Archives that contain photos/video are expanded onto the library SSD (not onto the disc).  
+2. **Fast scan** on the disc: extension / size / junk-path gates only (no PIL dimension probes on `/Volumes`). Archives (zip/tar/…) that contain photos/video are expanded onto the library SSD.  
 3. Copy runs in a **serial queue** (one disc at a time) into `library/staging/…` on the **library SSD**.  
-4. When copy finishes, **optical discs auto-eject** (`auto_eject=true`) so the drive is free; the import job is **complete for that disc** — insert the next.  
-5. A **global staging processor** classifies and promotes in the background (does not hold the optical drive).  
-6. Library fills as items promote. Use **Inference** to upgrade heuristic captions; **Duplicates** for keep-best.  
+4. When copy finishes, **optical discs auto-eject** so the drive is free. UI shows **Disc ready** (insert next / finished; **Eject** if auto-eject did not run). The import job is **complete for that disc**.  
+5. A **global staging processor** applies full quality (dimensions), EXIF, optional VLM, promote, and **duplicate detection** (exact → pHash → embedding) — does not hold the optical drive.  
+6. Library fills as items promote. Use **Inference** only when the queue is non-empty (heuristics / pending); **Duplicates** for keep-best.  
 7. AI accepts by default — edit captions / trash in **Library** when you care.
+
+**Not before copy:** full duplicate identification and dimension quality gates. Exact SHA skip of already-catalogued files happens on **resume** (after hashing during copy). Fresh imports still copy first.
 
 Archives: `.zip` / `.cbz` / `.tar` / `.tar.gz` / … (stdlib). `.rar` / `.7z` if `7z` or `unar` is on PATH.
 
@@ -122,7 +124,8 @@ export NEURALDISC_IMPORT_COPY_SERIAL=true    # default: one disc at a time
 export NEURALDISC_VLM_ENABLED=true           # local mlx-vlm during process / Inference
 ```
 
-`GET /api/import/process/status` — background queue depth and last message.
+`GET /api/import/process/status` — background queue depth and last message.  
+`POST /api/import/eject` — `{ "path": "/Volumes/…" }` if the tray did not open.
 
 ### Fix rotation
 
@@ -225,6 +228,11 @@ curl -s -X POST http://127.0.0.1:8020/api/jobs/supervisor/tick
 - `POST /api/jobs/{id}/cancel`
 
 ## Quality gates (junk rejection)
+
+| When | What |
+|------|------|
+| **On optical scan** | Extension, byte-size floor, junk path/dir names (no PIL) |
+| **After copy (SSD)** | Dimensions / megapixels / aspect / animated GIF + full pipeline |
 
 | Rule | Default |
 |------|---------|

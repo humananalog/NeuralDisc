@@ -2,7 +2,7 @@
 
 **Fully autonomous, local-first photo & video library for Apple Silicon.**
 
-**Current release: [v0.3.9](CHANGELOG.md)** · [Changelog](CHANGELOG.md)
+**Current release: [v0.3.11](CHANGELOG.md)** · [Changelog](CHANGELOG.md)
 
 NeuralDisc transforms decades of personal media locked on physical DVDs and CDs into a modern, searchable, Lightroom-class digital archive — completely offline, privacy-first, and purpose-built for Apple Silicon.
 
@@ -21,7 +21,7 @@ cd backend
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 neuraldisc init
-neuraldisc serve --host 127.0.0.1 --port 8000   # http://127.0.0.1:8000/docs
+neuraldisc serve --host 127.0.0.1 --port 8020   # http://127.0.0.1:8020/docs
 
 # Frontend (second terminal) — use 3020 (not 3000)
 cd frontend && npm install && npm run dev -- --port 3020 --hostname 127.0.0.1
@@ -95,10 +95,10 @@ RELEASE_NOTES.md      # Human release summary
 
 | Document | Purpose |
 |----------|---------|
-| **[RELEASE_NOTES.md](RELEASE_NOTES.md)** | v0.3.0 release summary |
+| **[RELEASE_NOTES.md](RELEASE_NOTES.md)** | Release summary + pointer to current version |
 | **[CHANGELOG.md](CHANGELOG.md)** | Keep-a-Changelog history |
-| **[docs/RUNBOOK.md](docs/RUNBOOK.md)** | Setup, env, quality gates, testing |
-| **[docs/API.md](docs/API.md)** | REST endpoints |
+| **[docs/RUNBOOK.md](docs/RUNBOOK.md)** | Setup, copy-first import, auto-resume, ports, testing |
+| **[docs/API.md](docs/API.md)** | REST endpoints (API :8020) |
 | **[SPECIFICATION.md](SPECIFICATION.md)** | Architecture, schema, pipeline, phases |
 | **[UI_UX.md](UI_UX.md)** | Visual system, shortcuts, components |
 
@@ -110,7 +110,7 @@ RELEASE_NOTES.md      # Human release summary
 
 ## Project status
 
-**v0.3.0 — Copy-first pipeline + inference + smart albums**, Phase 5 hardening ongoing:
+**v0.3.11 — Copy-first pipeline + auto-eject + auto-resume**, Phase 5 hardening ongoing:
 
 | Area | Status |
 |------|--------|
