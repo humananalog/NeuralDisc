@@ -290,7 +290,7 @@ Coverage includes: API smoke, import promote, quality, blur, orientation/delete,
 |---------|--------|
 | Import fails immediately | `exiftool -ver` on PATH |
 | Staging on internal disk | Settings → library_root on external SSD |
-| SQLite locked during import | Ensure single API process; busy_timeout is 60s |
+| SQLite locked during import | Fixed in v0.3.13 (short transactions + write lock). Keep `NEURALDISC_IMPORT_PROCESS_WORKERS=1`. Restart API if an old process still holds the DB. |
 | Thumbs wrong after rotate | Hard refresh; thumbs cache-busted via `updated_at` |
 | Permanent delete 500 | Fixed in 0.2 (best_media_id FK); update to latest |
 | Port 3000 busy | Frontend defaults to **3020** |
