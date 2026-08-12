@@ -130,7 +130,8 @@ class Settings(BaseSettings):
     # Ingest / high-throughput import
     volumes_path: Path = Path("/Volumes")
     watch_volumes: bool = False
-    auto_eject: bool = False
+    # After copy-only finishes, eject optical discs so the drive is free for the next one
+    auto_eject: bool = True
     # Parallelism: copy is I/O-bound; process (EXIF/VLM) is separate
     import_copy_workers: int = 6
     import_process_workers: int = 2

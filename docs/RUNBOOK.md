@@ -103,7 +103,7 @@ Default pipeline (`import_copy_only=true`, `import_copy_serial=true`):
 1. Insert disc (or open Import → select volume/folder). Prefer **full disc** for optical media.  
 2. Scan finds loose media **and** archives (zip/tar/…). Archives that contain photos/video are expanded onto the library SSD (not onto the disc).  
 3. Copy runs in a **serial queue** (one disc at a time) into `library/staging/…` on the **library SSD**.  
-4. When the panel says **Disc free / eject OK**, the import job is **complete for that disc** — eject and start the next.  
+4. When copy finishes, **optical discs auto-eject** (`auto_eject=true`) so the drive is free; the import job is **complete for that disc** — insert the next.  
 5. A **global staging processor** classifies and promotes in the background (does not hold the optical drive).  
 6. Library fills as items promote. Use **Inference** to upgrade heuristic captions; **Duplicates** for keep-best.  
 7. AI accepts by default — edit captions / trash in **Library** when you care.
@@ -111,6 +111,10 @@ Default pipeline (`import_copy_only=true`, `import_copy_serial=true`):
 Archives: `.zip` / `.cbz` / `.tar` / `.tar.gz` / … (stdlib). `.rar` / `.7z` if `7z` or `unar` is on PATH.
 
 Optional env:
+
+```bash
+export NEURALDISC_AUTO_EJECT=false   # keep disc mounted after copy
+```
 
 ```bash
 export NEURALDISC_IMPORT_COPY_ONLY=true      # default: copy decoupled from process

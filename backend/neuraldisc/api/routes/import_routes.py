@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from neuraldisc.ingest.detector import list_mounted_volumes
+from neuraldisc.ingest.detector import eject_volume, list_mounted_volumes
 from neuraldisc.ingest.importer import (
     ImportSource,
     get_import_progress,
@@ -71,6 +71,26 @@ class ImportStatusResponse(BaseModel):
     cancel_requested: bool = False
     copy_only: bool = True
     disc_ready: bool = False
+    source_paths: list[str] = Field(default_factory=list)
+    ejected_paths: list[str] = Field(default_factory=list)
+
+
+class EjectRequest(BaseModel):
+    path: str
+    force: bool = False
+
+
+@router.post("/eject")
+def eject_import_volume(body: EjectRequest) -> dict:
+    """Eject / unmount a volume after copy so the optical drive is free.
+
+    Safe once files are on the library SSD (copy-only pipeline). Refuses
+    non-/Volumes and system volumes.
+    """
+    result = eject_volume(body.path, force=body.force)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "eject failed")
+    return result
 
 
 @router.post("", response_model=ImportStartResponse)

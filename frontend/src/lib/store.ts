@@ -20,6 +20,8 @@ export type DiscReadyPrompt = {
   copied: number;
   bytesCopied: number;
   total: number;
+  sourcePaths: string[];
+  ejectedPaths: string[];
 };
 
 type AppState = {
@@ -211,6 +213,8 @@ export const useAppStore = create<AppState>((set, get) => ({
               copied: status.copied ?? 0,
               bytesCopied: status.bytes_copied ?? 0,
               total: status.total ?? 0,
+              sourcePaths: status.source_paths ?? [],
+              ejectedPaths: status.ejected_paths ?? [],
             }
           : s.discReadyPrompt,
       };

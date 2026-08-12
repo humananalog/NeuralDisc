@@ -9,6 +9,7 @@ import { formatBytes } from "@/lib/utils";
 /**
  * Apple-style sheet after a disc finishes copying.
  * Ask: insert next disc, or finished for now.
+ * Auto-eject may already have freed the drive; otherwise offer Eject.
  */
 export function DiscReadyDialog() {
   const prompt = useAppStore((s) => s.discReadyPrompt);
@@ -16,12 +17,17 @@ export function DiscReadyDialog() {
   const finishDiscSession = useAppStore((s) => s.finishDiscSession);
   const [visible, setVisible] = useState(false);
   const [newVolumeHint, setNewVolumeHint] = useState<string | null>(null);
+  const [ejecting, setEjecting] = useState(false);
+  const [ejectError, setEjectError] = useState<string | null>(null);
+  const [manualEjected, setManualEjected] = useState(false);
 
   // Enter animation
   useEffect(() => {
     if (!prompt) {
       setVisible(false);
       setNewVolumeHint(null);
+      setEjectError(null);
+      setManualEjected(false);
       return;
     }
     const id = requestAnimationFrame(() => setVisible(true));
@@ -81,11 +87,36 @@ export function DiscReadyDialog() {
 
   if (!prompt) return null;
 
+  const alreadyEjected =
+    manualEjected ||
+    (prompt.ejectedPaths.length > 0 &&
+      prompt.sourcePaths.every(
+        (p) => prompt.ejectedPaths.includes(p) || !p.startsWith("/Volumes/"),
+      ));
+  const ejectPath =
+    prompt.sourcePaths.find((p) => p.startsWith("/Volumes/")) ||
+    prompt.sourcePaths[0] ||
+    null;
+
   const stats =
     prompt.copied > 0
       ? `${prompt.copied.toLocaleString()} file${prompt.copied === 1 ? "" : "s"}` +
         (prompt.bytesCopied > 0 ? ` · ${formatBytes(prompt.bytesCopied)}` : "")
       : null;
+
+  const onEject = async () => {
+    if (!ejectPath || ejecting) return;
+    setEjecting(true);
+    setEjectError(null);
+    try {
+      await api.ejectVolume(ejectPath);
+      setManualEjected(true);
+    } catch (err) {
+      setEjectError(err instanceof Error ? err.message : "Eject failed");
+    } finally {
+      setEjecting(false);
+    }
+  };
 
   return (
     <div
@@ -118,7 +149,7 @@ export function DiscReadyDialog() {
             id="disc-ready-title"
             className="text-[20px] font-semibold tracking-tight text-white"
           >
-            Disc ready
+            {alreadyEjected ? "Drive free" : "Disc ready"}
           </h2>
           <p
             id="disc-ready-desc"
@@ -127,9 +158,15 @@ export function DiscReadyDialog() {
             <span className="font-medium text-white/80">{prompt.label}</span>
             {stats ? ` — ${stats} copied.` : " was copied."}
             <br />
-            Eject this disc, then insert the next one — or finish for now.
+            {alreadyEjected
+              ? "Drive ejected. Insert the next disc — or finish for now."
+              : "Eject this disc, then insert the next one — or finish for now."}
+            <br />
             Classification continues in the background.
           </p>
+          {ejectError && (
+            <p className="mt-3 text-[12px] text-red-400">{ejectError}</p>
+          )}
           {newVolumeHint && (
             <p className="mt-3 text-[12px] font-medium text-[var(--accent)]">
               Detected: {newVolumeHint}
@@ -138,6 +175,19 @@ export function DiscReadyDialog() {
         </div>
 
         <div className="mt-5 flex flex-col border-t border-white/[0.08]">
+          {!alreadyEjected && ejectPath && (
+            <>
+              <button
+                type="button"
+                disabled={ejecting}
+                onClick={() => void onEject()}
+                className="px-5 py-3.5 text-[16px] font-semibold text-white/90 transition hover:bg-white/[0.04] active:bg-white/[0.06] disabled:opacity-50"
+              >
+                {ejecting ? "Ejecting…" : "Eject disc"}
+              </button>
+              <div className="h-px bg-white/[0.08]" />
+            </>
+          )}
           <button
             type="button"
             onClick={() => continueNextDisc()}

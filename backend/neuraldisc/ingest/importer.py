@@ -93,6 +93,9 @@ class ImportProgress:
     copy_only: bool = True
     # Disc ready to eject (copy finished for this job)
     disc_ready: bool = False
+    # Source mount paths for this job (for eject / next-disc UI)
+    source_paths: list[str] = field(default_factory=list)
+    ejected_paths: list[str] = field(default_factory=list)
 
     @property
     def items_per_hour(self) -> float:
@@ -133,6 +136,8 @@ class ImportProgress:
             "resume_of": self.resume_of,
             "copy_only": self.copy_only,
             "disc_ready": self.disc_ready,
+            "source_paths": list(self.source_paths),
+            "ejected_paths": list(self.ejected_paths),
         }
 
 
@@ -1024,11 +1029,47 @@ def _import_one_source(
         if _cancelled(progress):
             raise ImportCancelled()
     else:
-        # Disc free — process continues elsewhere
+        # Disc free — process continues on library SSD; optionally eject optical
         progress.disc_ready = True
+        if str(path) not in progress.source_paths:
+            progress.source_paths.append(str(path))
+        ejected = False
+        if settings.auto_eject and str(path).startswith("/Volumes"):
+            try:
+                vol = path if path.is_dir() else path.parent
+                info = probe_volume(vol)
+                # Only optical — never auto-eject USB / external HDDs
+                if info.is_optical or info.kind == "optical":
+                    from neuraldisc.ingest.detector import eject_volume
+
+                    result = eject_volume(vol)
+                    if result.get("ok"):
+                        ejected = True
+                        if str(vol) not in progress.ejected_paths:
+                            progress.ejected_paths.append(str(vol))
+                        log.info(
+                            "optical_auto_ejected",
+                            path=str(vol),
+                            name=name,
+                            job_id=progress.job_id,
+                        )
+                    else:
+                        log.warning(
+                            "optical_auto_eject_failed",
+                            path=str(vol),
+                            error=result.get("error"),
+                        )
+            except Exception as eject_exc:  # noqa: BLE001
+                log.warning("optical_auto_eject_error", path=str(path), error=str(eject_exc))
+
         progress.message = (
             f"{name}: copy complete ({progress.copied} files) · "
-            f"eject when ready · classify in background"
+            + (
+                "drive ejected · insert next disc · "
+                if ejected
+                else "eject when ready · "
+            )
+            + "classify in background on library SSD"
         )
         try:
             from neuraldisc.ingest.staging_processor import wake_processor

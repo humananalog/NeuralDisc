@@ -205,7 +205,9 @@ export function ImportLivePanel() {
                         ? "Copying to staging · process is separate"
                         : "Live import"
                     : copyDone || s?.disc_ready
-                      ? "Copy done — eject / next disc OK"
+                      ? (s?.ejected_paths?.length ?? 0) > 0
+                        ? "Copy done — drive ejected"
+                        : "Copy done — eject / next disc OK"
                       : s?.status}
                 </div>
               </div>
@@ -273,7 +275,9 @@ export function ImportLivePanel() {
                   )}
                   {(copyDone || s.disc_ready) && (
                     <div className="rounded-md border border-[var(--success)]/30 bg-[var(--success)]/10 px-2 py-1.5 text-[10px] text-[var(--success)]">
-                      Copy finished — disc is free to eject.
+                      {(s.ejected_paths?.length ?? 0) > 0
+                        ? "Copy finished — drive ejected · insert next disc."
+                        : "Copy finished — disc is free to eject."}
                     </div>
                   )}
                   {processHint && (

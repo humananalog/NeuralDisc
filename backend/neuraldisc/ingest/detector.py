@@ -6,7 +6,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from neuraldisc.config import MEDIA_EXTENSIONS, Settings, get_settings
 from neuraldisc.utils.logging import get_logger
@@ -224,6 +224,79 @@ def volume_to_dict(v: VolumeInfo) -> dict:
         "mode": "disc" if v.kind in ("optical", "removable") else "folder",
         "importable": True,
     }
+
+
+def eject_volume(path: Path | str, *, force: bool = False) -> dict[str, Any]:
+    """Eject / unmount a volume so the optical drive (player) is free.
+
+    Prefer ``diskutil eject``; fall back to ``unmountDisk``. Never touches
+    internal system volumes. Safe to call after copy-only import — files
+    already live on the library SSD.
+    """
+    p = Path(path).expanduser()
+    # Check the mount name before resolve — "Macintosh HD" often resolves to /
+    mount_name = p.name.lower()
+    if mount_name in _SKIP_VOLUME_NAMES or mount_name == "macintosh hd":
+        return {"ok": False, "path": str(p), "error": "refusing to eject system volume"}
+    if not str(p).startswith("/Volumes/") and not str(p).startswith("/Volumes"):
+        return {
+            "ok": False,
+            "path": str(p),
+            "error": "refusing to eject non-/Volumes path",
+        }
+    try:
+        p = p.resolve()
+    except OSError:
+        pass
+    # After resolve, still must be under /Volumes (never /)
+    if not str(p).startswith("/Volumes/"):
+        return {
+            "ok": False,
+            "path": str(p),
+            "error": "refusing to eject non-/Volumes path",
+        }
+    if p.name.lower() in _SKIP_VOLUME_NAMES or p.name.lower() == "macintosh hd":
+        return {"ok": False, "path": str(p), "error": "refusing to eject system volume"}
+
+    # Prefer eject while still mounted; if already gone, treat as success
+    if not p.exists():
+        return {"ok": True, "path": str(p), "already_unmounted": True}
+
+    cmds: list[list[str]] = [
+        ["diskutil", "eject", str(p)],
+        ["diskutil", "unmountDisk", str(p)],
+    ]
+    if force:
+        cmds.insert(1, ["diskutil", "unmountDisk", "force", str(p)])
+
+    last_err = ""
+    for cmd in cmds:
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            last_err = str(exc)
+            continue
+        if proc.returncode == 0:
+            log.info("volume_ejected", path=str(p), cmd=cmd)
+            return {
+                "ok": True,
+                "path": str(p),
+                "cmd": " ".join(cmd),
+                "stdout": (proc.stdout or "").strip()[:400],
+            }
+        last_err = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+        # If already unmounted, diskutil may error — check
+        if not p.exists():
+            return {"ok": True, "path": str(p), "already_unmounted": True}
+
+    log.warning("volume_eject_failed", path=str(p), error=last_err[:300])
+    return {"ok": False, "path": str(p), "error": last_err[:400]}
 
 
 class VolumeWatcher:

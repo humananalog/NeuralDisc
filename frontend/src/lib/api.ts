@@ -635,6 +635,11 @@ export const api = {
     }),
   importStatus: (jobId: string) => request<ImportStatus>(`/api/import/${jobId}`),
   importLive: () => request<ImportStatus[]>("/api/import/live"),
+  ejectVolume: (path: string, force = false) =>
+    request<{ ok: boolean; path: string; error?: string; already_unmounted?: boolean }>(
+      "/api/import/eject",
+      { method: "POST", body: JSON.stringify({ path, force }) },
+    ),
   processStatus: () =>
     request<{
       status: string;
@@ -695,6 +700,8 @@ export type ImportStatus = {
   /** Copy finished — optical drive free; process continues in background */
   disc_ready?: boolean;
   copy_only?: boolean;
+  source_paths?: string[];
+  ejected_paths?: string[];
 };
 
 export type DuplicateSummary = {

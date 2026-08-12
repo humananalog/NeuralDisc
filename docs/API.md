@@ -39,7 +39,8 @@ Default: **serial copy** to `library/staging`, then **background process**. Impo
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/import` | Start/enqueue copy job. Modes: `disc`, `media`, `folder`, `batch` |
-| GET | `/api/import/{job_id}` | Status (`phase`, `copied`, `disc_ready`, `copy_only`, …) |
+| GET | `/api/import/{job_id}` | Status (`phase`, `copied`, `disc_ready`, `copy_only`, `source_paths`, `ejected_paths`, …) |
+| POST | `/api/import/eject` | Eject/unmount a `/Volumes/…` path after copy |
 | GET | `/api/import/live` | In-memory live copy jobs |
 | GET | `/api/import/suggestions/volumes` | Mounted volumes + media counts |
 | GET | `/api/import/process/status` | Background staging processor (pending, promoted session) |

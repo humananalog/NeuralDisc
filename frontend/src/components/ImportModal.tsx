@@ -580,10 +580,10 @@ export function ImportModal() {
           <div className="rounded-md border border-[var(--accent)]/25 bg-[var(--accent)]/5 px-3 py-2 text-[11px] text-[var(--text-secondary)]">
             <strong className="text-[var(--text-primary)]">Copy-first pipeline:</strong> files land
             in staging on your library SSD. Archives (zip/tar/…) that contain photos or video are
-            expanded automatically. When copy finishes,{" "}
-            <strong className="text-[var(--text-primary)]">eject and insert the next disc</strong>
-            — classification runs in the background. Discs copy in series. Minimize (Esc) frees the
-            UI.
+            expanded automatically. When copy finishes, the{" "}
+            <strong className="text-[var(--text-primary)]">drive auto-ejects</strong> so you can
+            insert the next disc — classification continues in the background. Discs copy in series.
+            Minimize (Esc) frees the UI.
           </div>
         </div>
 

@@ -5,6 +5,14 @@ All notable changes to NeuralDisc are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.10] — 2026-08-12
+
+### Added
+- Auto-eject optical volumes after copy-only import (`auto_eject=true`); `POST /api/import/eject` + Disc ready **Eject** when auto-eject did not run
+
+### Changed
+- Disc ready sheet reflects ejected vs still-mounted; classification stays on library SSD while the drive is freed for the next disc
+
 ## [0.3.9] — 2026-08-12
 
 ### Added
