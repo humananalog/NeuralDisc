@@ -9,7 +9,7 @@ export NEURALDISC_LIBRARY_ROOT="${NEURALDISC_LIBRARY_ROOT:-$HOME/NeuralDisc}"
 source "$ROOT/backend/.venv/bin/activate"
 cd "$ROOT/backend"
 python -c "from neuraldisc.config import get_settings; from neuraldisc.db.database import init_engine, create_all; s=get_settings(); s.ensure_layout(); init_engine(s); create_all()"
-neuraldisc serve --host 127.0.0.1 --port 8000 &
+neuraldisc serve --host 127.0.0.1 --port 8020 &
 BACKEND_PID=$!
 
 # Frontend
@@ -24,7 +24,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Backend  → http://127.0.0.1:8000  (docs /docs)"
+echo "Backend  → http://127.0.0.1:8020  (docs /docs)"
 echo "Frontend → http://127.0.0.1:$FRONTEND_PORT"
 echo "Library  → $NEURALDISC_LIBRARY_ROOT"
 wait
