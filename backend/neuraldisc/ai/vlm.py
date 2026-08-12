@@ -109,15 +109,19 @@ def analyse_media(
     settings: Settings,
     *,
     prior_vlm_failures: int = 0,
+    precomputed: dict[str, Any] | None = None,
+    precomputed_model: tuple[str, str] | None = None,
 ) -> MediaAnalysis | None:
     if media.analysis:
         return media.analysis
 
-    result: dict[str, Any] | None = None
+    result: dict[str, Any] | None = precomputed
     model_name = "heuristic-fallback"
     model_version = "0.1.0"
+    if precomputed is not None and precomputed_model:
+        model_name, model_version = precomputed_model
 
-    if settings.vlm_enabled:
+    if result is None and settings.vlm_enabled:
         from neuraldisc.mlx_plane_lease import MlxPlaneLeaseError, ensure_lease_held
 
         try:

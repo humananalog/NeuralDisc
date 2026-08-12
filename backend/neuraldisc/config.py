@@ -134,7 +134,8 @@ class Settings(BaseSettings):
     auto_eject: bool = True
     # Parallelism: copy is I/O-bound; process (EXIF/VLM) is separate
     import_copy_workers: int = 6
-    import_process_workers: int = 2
+    import_process_workers: int = 1  # SQLite: one process writer avoids lock storms
+
     # Keep files in staging until fully processed & classified, then promote
     import_stage_until_classified: bool = True
     # SOTA pipeline: copy-only to staging (temp) so discs can rotate immediately.

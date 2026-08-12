@@ -140,11 +140,29 @@ def _claim_staging_ids(limit: int) -> list[str]:
 
 
 def _process_one(media_id: str, settings: Settings) -> str:
-    return process_media_item(
-        media_id,
-        settings,
-        promote=settings.import_stage_until_classified,
-    )
+    from neuraldisc.db.database import is_sqlite_locked
+
+    last_exc: Exception | None = None
+    for attempt in range(5):
+        try:
+            return process_media_item(
+                media_id,
+                settings,
+                promote=settings.import_stage_until_classified,
+            )
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if is_sqlite_locked(exc) and attempt < 4:
+                log.warning(
+                    "staging_sqlite_retry",
+                    media_id=media_id,
+                    attempt=attempt + 1,
+                )
+                time.sleep(0.2 * (attempt + 1))
+                continue
+            raise
+    assert last_exc is not None
+    raise last_exc
 
 
 def _mark_staging_failed(media_id: str, reason: str) -> None:

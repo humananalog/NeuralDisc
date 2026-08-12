@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,6 +11,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from neuraldisc.config import Settings, get_settings
 from neuraldisc.db.models import Base
@@ -18,6 +21,10 @@ log = get_logger(__name__)
 
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
+
+# SQLite allows one writer. Serialize session_scope so import + staging +
+# supervisor never open overlapping write transactions.
+_WRITE_LOCK = threading.RLock()
 
 FTS_DDL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
@@ -45,15 +52,14 @@ def init_engine(settings: Settings | None = None) -> Engine:
     settings = settings or get_settings()
     settings.ensure_layout()
     url = get_database_url(settings.sqlite_path)
+    # NullPool: avoid QueuePool connection storms on SQLite
     _engine = create_engine(
         url,
         connect_args={
             "check_same_thread": False,
-            "timeout": 60.0,  # wait on locks (import uses multi-thread writers)
+            "timeout": 120.0,
         },
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
+        poolclass=NullPool,
     )
 
     @event.listens_for(_engine, "connect")
@@ -62,7 +68,9 @@ def init_engine(settings: Settings | None = None) -> Engine:
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=60000")
+        cursor.execute("PRAGMA busy_timeout=120000")
+        cursor.execute("PRAGMA temp_store=MEMORY")
+        cursor.execute("PRAGMA wal_autocheckpoint=1000")
         cursor.close()
 
     _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
@@ -80,14 +88,12 @@ def create_all(engine: Engine | None = None) -> None:
     Base.metadata.create_all(bind=eng)
     with eng.begin() as conn:
         conn.execute(text(FTS_DDL))
-        # Lightweight migrations for existing DBs
         _ensure_column(conn, "media_items", "lifecycle", "TEXT DEFAULT 'library'")
         _ensure_column(conn, "media_items", "blur_score", "REAL")
         _ensure_column(conn, "media_items", "is_blurry", "BOOLEAN DEFAULT 0")
         _ensure_column(conn, "media_items", "deleted_at", "TIMESTAMP")
         _ensure_column(conn, "media_items", "auto_rotated", "BOOLEAN DEFAULT 0")
         _ensure_column(conn, "media_items", "rotation_degrees", "INTEGER DEFAULT 0")
-        # Albums / smart collections
         _ensure_column(conn, "albums", "kind", "TEXT DEFAULT 'album'")
         _ensure_column(conn, "albums", "auto_key", "TEXT")
         _ensure_column(conn, "albums", "rules_json", "TEXT")
@@ -105,11 +111,22 @@ def _ensure_column(conn, table: str, column: str, col_def: str) -> None:
         log.info("schema_column_added", table=table, column=column)
 
 
+def is_sqlite_locked(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return "database is locked" in msg or "database is busy" in msg
+
+
 @contextmanager
 def session_scope() -> Generator[Session, None, None]:
+    """Session with a process-wide write lock.
+
+    Keep bodies short — never EXIF / VLM / large file I/O inside this context.
+    """
     if _SessionLocal is None:
         init_engine()
     assert _SessionLocal is not None
+
+    _WRITE_LOCK.acquire()
     session = _SessionLocal()
     try:
         yield session
@@ -119,18 +136,25 @@ def session_scope() -> Generator[Session, None, None]:
         raise
     finally:
         session.close()
+        _WRITE_LOCK.release()
 
 
 def get_db() -> Generator[Session, None, None]:
-    """FastAPI dependency."""
+    """FastAPI dependency — shares the process-wide write lock."""
     if _SessionLocal is None:
         init_engine()
     assert _SessionLocal is not None
-    db = _SessionLocal()
+    _WRITE_LOCK.acquire()
+    session = _SessionLocal()
     try:
-        yield db
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
-        db.close()
+        session.close()
+        _WRITE_LOCK.release()
 
 
 def reset_engine() -> None:

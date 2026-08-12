@@ -116,6 +116,7 @@ Optional env:
 
 ```bash
 export NEURALDISC_AUTO_EJECT=false   # keep disc mounted after copy
+export NEURALDISC_IMPORT_PROCESS_WORKERS=1  # default; keep at 1 with SQLite
 ```
 
 ```bash

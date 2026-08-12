@@ -158,8 +158,14 @@ def process_media_item(
     provenance: str | None = None,
     originals_root: Path | None = None,
 ) -> ProcessResult:
-    """Process one media file while still in staging; promote only if classified OK."""
+    """Process one staging file; promote only if classified OK.
+
+    Heavy I/O (exiftool, orient, derivatives, VLM) runs **outside** any DB
+    session so SQLite is not locked during multi-second work.
+    """
     settings = settings or get_settings()
+
+    # --- 1. Snapshot (short read) ---
     with session_scope() as session:
         media = session.get(MediaItem, media_id)
         if media is None:
@@ -168,22 +174,183 @@ def process_media_item(
         if not path.exists():
             log.warning("media_missing", media_id=media_id, path=str(path))
             return "error"
+        media_type = media.media_type
+        original_relpath = media.original_path
+        file_size = media.file_size
+        filename = media.filename
+        has_analysis = media.analysis is not None
+        rotation_degrees = media.rotation_degrees or 0
+        lifecycle = media.lifecycle or "staging"
+        width = media.width
+        height = media.height
 
-        # Metadata — exiftool is mandatory
+    # --- 2. Heavy work (no DB) ---
+    try:
+        meta = extract_metadata(
+            path,
+            media_type,
+            original_relpath=original_relpath,
+        )
+    except ExifToolNotFoundError:
+        log.error("exiftool_required_missing", media_id=media_id)
+        raise
+    except ExifToolError as exc:
+        log.warning("exiftool_failed", media_id=media_id, error=str(exc))
+        meta = None
+
+    if meta is not None:
+        width = meta.width or width
+        height = meta.height or height
+
+    auto_rotated = False
+    orient_degrees = 0
+    new_sha: str | None = None
+    new_size: int | None = None
+    orient_w: int | None = None
+    orient_h: int | None = None
+
+    if media_type == "image" and settings.auto_rotate_enabled and path.exists():
         try:
-            meta = extract_metadata(
+            orient = auto_orient_image(
                 path,
-                media.media_type,
-                original_relpath=media.original_path,
+                content_fallback=settings.auto_rotate_content_fallback,
             )
-        except ExifToolNotFoundError:
-            log.error("exiftool_required_missing", media_id=media.id)
-            raise
-        except ExifToolError as exc:
-            log.warning("exiftool_failed", media_id=media.id, error=str(exc))
-            # Soft-fail single file: keep processing with empty EXIF rather than
-            # aborting whole import; dimensions may still come from quality later
-            meta = None
+            if orient.changed:
+                auto_rotated = True
+                orient_degrees = orient.degrees_applied
+                orient_w = orient.width
+                orient_h = orient.height
+                if orient.width:
+                    width = orient.width
+                if orient.height:
+                    height = orient.height
+                try:
+                    new_size = path.stat().st_size
+                    new_sha = sha256_file(path)
+                except OSError:
+                    pass
+                log.info(
+                    "auto_rotated",
+                    media_id=media_id,
+                    method=orient.method,
+                    degrees=orient.degrees_applied,
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("auto_orient_step_failed", media_id=media_id, error=str(exc))
+
+    if settings.quality_enabled:
+        verdict = evaluate_media_item(
+            path,
+            media_type=media_type,
+            width=width,
+            height=height,
+            file_size=new_size or file_size,
+            settings=settings,
+        )
+        if verdict.rejected:
+            with session_scope() as session:
+                media = session.get(MediaItem, media_id)
+                if media:
+                    _purge_rejected_media(
+                        session, media, settings, verdict.code, verdict.reason
+                    )
+                    log.info(
+                        "quality_purge",
+                        media_id=media.id,
+                        filename=media.filename,
+                        code=verdict.code,
+                        reason=verdict.reason,
+                    )
+            return "rejected"
+
+    phash: str | None = None
+    dhash: str | None = None
+    blur_score: float | None = None
+    is_blurry = False
+    set_flag = False
+    blur_source: Path | None = None
+
+    if media_type == "image":
+        generate_still_derivatives(path, media_id, settings)
+        phash, dhash = compute_perceptual_hashes(path)
+        blur_source = path
+    else:
+        generate_video_derivatives(path, media_id, settings)
+        thumb = settings.thumbs_dir / f"{media_id}.jpg"
+        if thumb.exists():
+            phash, dhash = compute_perceptual_hashes(thumb)
+            blur_source = thumb
+
+    if settings.blur_enabled and blur_source is not None:
+        try:
+            blur = detect_blur(blur_source, threshold=settings.blur_threshold)
+            if blur is not None:
+                blur_score = blur.score
+                is_blurry = blur.is_blurry
+                if blur.is_blurry and settings.blur_auto_flag:
+                    set_flag = True
+                log.info(
+                    "blur_scored",
+                    media_id=media_id,
+                    score=blur.score,
+                    is_blurry=blur.is_blurry,
+                    threshold=blur.threshold,
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("blur_detect_failed", media_id=media_id, error=str(exc))
+
+    # VLM inference outside the DB transaction
+    precomputed: dict | None = None
+    precomputed_model: tuple[str, str] | None = None
+    if settings.vlm_enabled and not has_analysis:
+        from neuraldisc.mlx_plane_lease import MlxPlaneLeaseError, ensure_lease_held
+        from neuraldisc.ai.vlm import _run_mlx_vlm
+
+        try:
+            ensure_lease_held(vlm_enabled=True, purpose="vlm_batch")
+            image_path = path
+            preview = settings.previews_dir / f"{media_id}.jpg"
+            if preview.exists():
+                image_path = preview
+            precomputed = _run_mlx_vlm(image_path, settings)
+            if precomputed:
+                precomputed_model = (settings.vlm_model, "mlx-vlm")
+        except MlxPlaneLeaseError as exc:
+            log.warning(
+                "vlm_deferred_no_lease",
+                media_id=media_id,
+                reason=exc.reason,
+                blocker=exc.blocker,
+            )
+            precomputed = None
+        except Exception as exc:  # noqa: BLE001
+            log.warning("vlm_step_failed", media_id=media_id, error=str(exc))
+            precomputed = None
+
+    # Promote file move outside DB (path update in next short write)
+    promoted_dest: Path | None = None
+    if promote and lifecycle == "staging":
+        src = path
+        if src.exists():
+            dest_root = originals_root or (settings.originals_dir / src.parent.name)
+            dest_root.mkdir(parents=True, exist_ok=True)
+            dest = dest_root / src.name
+            if dest.exists() and dest.resolve() != src.resolve():
+                dest = dest_root / f"{media_id[:8]}_{src.name}"
+            try:
+                if src.resolve() != dest.resolve():
+                    shutil.move(str(src), str(dest))
+                promoted_dest = dest
+                path = dest
+            except OSError as exc:
+                log.error("promote_failed", media_id=media_id, error=str(exc))
+                return "error"
+
+    # --- 3. Short write ---
+    with session_scope() as session:
+        media = session.get(MediaItem, media_id)
+        if media is None:
+            return "error"
 
         if meta is not None:
             media.width = meta.width
@@ -196,110 +363,42 @@ def process_media_item(
             media.gps_lon = meta.gps_lon
             media.orientation = meta.orientation
             media.duration_ms = meta.duration_ms
-            if meta.taken_at_source:
-                log.debug(
-                    "taken_at_resolved",
-                    media_id=media.id,
-                    source=meta.taken_at_source,
-                    taken_at=meta.taken_at.isoformat() if meta.taken_at else None,
-                )
+
+        if auto_rotated:
+            media.auto_rotated = True
+            media.rotation_degrees = rotation_degrees + orient_degrees
+            media.orientation = 1
+            if orient_w:
+                media.width = orient_w
+            if orient_h:
+                media.height = orient_h
+            if new_size is not None:
+                media.file_size = new_size
+            if new_sha:
+                media.sha256 = new_sha
+
+        if phash:
+            media.phash = phash
+        if dhash:
+            media.dhash = dhash
+        if blur_score is not None:
+            media.blur_score = blur_score
+            media.is_blurry = is_blurry
+            if set_flag:
+                media.flag = True
+
         media.updated_at = datetime.now(timezone.utc)
         session.flush()
 
-        # SOTA auto-rotate: bake EXIF Orientation (+ content upright fallback)
-        # before quality / derivatives so all downstream steps see upright pixels.
-        if (
-            media.media_type == "image"
-            and settings.auto_rotate_enabled
-            and path.exists()
-        ):
-            try:
-                orient = auto_orient_image(
-                    path,
-                    content_fallback=settings.auto_rotate_content_fallback,
-                )
-                if orient.changed:
-                    media.auto_rotated = True
-                    media.rotation_degrees = (media.rotation_degrees or 0) + orient.degrees_applied
-                    media.orientation = 1
-                    if orient.width:
-                        media.width = orient.width
-                    if orient.height:
-                        media.height = orient.height
-                    try:
-                        media.file_size = path.stat().st_size
-                        media.sha256 = sha256_file(path)
-                    except OSError:
-                        pass
-                    log.info(
-                        "auto_rotated",
-                        media_id=media.id,
-                        method=orient.method,
-                        degrees=orient.degrees_applied,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("auto_orient_step_failed", media_id=media.id, error=str(exc))
-
-        # Second-pass quality gate
-        if settings.quality_enabled:
-            verdict = evaluate_media_item(
-                path,
-                media_type=media.media_type,
-                width=media.width,
-                height=media.height,
-                file_size=media.file_size,
-                settings=settings,
-            )
-            if verdict.rejected:
-                _purge_rejected_media(session, media, settings, verdict.code, verdict.reason)
-                log.info(
-                    "quality_purge",
-                    media_id=media.id,
-                    filename=media.filename,
-                    code=verdict.code,
-                    reason=verdict.reason,
-                )
-                return "rejected"
-
-        # Derivatives + hashes (from staging path — already upright)
-        if media.media_type == "image":
-            generate_still_derivatives(path, media.id, settings)
-            ph, dh = compute_perceptual_hashes(path)
-            media.phash = ph
-            media.dhash = dh
-            blur_source = path
-        else:
-            generate_video_derivatives(path, media.id, settings)
-            thumb = settings.thumbs_dir / f"{media.id}.jpg"
-            if thumb.exists():
-                ph, dh = compute_perceptual_hashes(thumb)
-                media.phash = ph
-                media.dhash = dh
-            blur_source = thumb if thumb.exists() else None
-
-        # Blur detection — flag soft/out-of-focus shots for review
-        if settings.blur_enabled and blur_source is not None:
-            try:
-                blur = detect_blur(blur_source, threshold=settings.blur_threshold)
-                if blur is not None:
-                    media.blur_score = blur.score
-                    media.is_blurry = blur.is_blurry
-                    if blur.is_blurry and settings.blur_auto_flag:
-                        media.flag = True
-                    log.info(
-                        "blur_scored",
-                        media_id=media.id,
-                        score=blur.score,
-                        is_blurry=blur.is_blurry,
-                        threshold=blur.threshold,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("blur_detect_failed", media_id=media.id, error=str(exc))
-
-        session.flush()
-
         try:
-            analyse_media(session, media, settings)
+            if not has_analysis:
+                analyse_media(
+                    session,
+                    media,
+                    settings,
+                    precomputed=precomputed,
+                    precomputed_model=precomputed_model,
+                )
         except Exception as exc:  # noqa: BLE001
             log.warning("vlm_step_failed", media_id=media.id, error=str(exc))
 
@@ -318,22 +417,24 @@ def process_media_item(
         except Exception as exc:  # noqa: BLE001
             log.warning("fts_step_failed", media_id=media.id, error=str(exc))
 
-        # Promote staging → immutable originals only after classification
-        if promote and (media.lifecycle or "staging") == "staging":
-            ok = _promote_media(session, media, settings, originals_root)
-            if not ok:
-                return "error"
+        if promoted_dest is not None:
+            media.library_path = str(promoted_dest)
+            media.lifecycle = "library"
+            media.hitl_status = "accepted"
+            media.updated_at = datetime.now(timezone.utc)
+            _close_open_hitl(session, media, resolution="accepted")
+            session.flush()
+            log.info("media_promoted", media_id=media.id, dest=str(promoted_dest))
         elif (media.lifecycle or "library") == "library":
-            # Already in library (legacy path) — ensure HITL exists
             _ensure_hitl(session, media, settings)
-        else:
+        elif not promote:
             media.lifecycle = "library"
             _ensure_hitl(session, media, settings)
 
         log.info(
             "media_processed",
             media_id=media.id,
-            filename=media.filename,
+            filename=filename,
             lifecycle=media.lifecycle,
         )
         return "promoted" if promote else "ok"
