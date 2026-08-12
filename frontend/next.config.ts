@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-const API_URL = process.env.NEURALDISC_API_URL || "http://127.0.0.1:8000";
+const API_URL = process.env.NEURALDISC_API_URL || "http://127.0.0.1:8020";
 
 const nextConfig: NextConfig = {
   async rewrites() {

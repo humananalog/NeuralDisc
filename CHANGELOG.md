@@ -5,6 +5,11 @@ All notable changes to NeuralDisc are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.8] — 2026-08-12
+
+### Fixed
+- Durable Mac Mini runtime: LaunchAgents for API/UI, API moved to **:8020** (avoids mineru :8000 and vllm-mlx :8010), UI proxies correctly and stays alive
+
 ## [0.3.7] — 2026-08-12
 
 ### Added
@@ -145,6 +150,7 @@ First full application release: local library backend, Next.js UI, high-throughp
 
 ---
 
+[0.3.8]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.8
 [0.3.7]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.7
 [0.3.6]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.6
 [0.3.5]: https://github.com/humananalog/NeuralDisc/releases/tag/v0.3.5

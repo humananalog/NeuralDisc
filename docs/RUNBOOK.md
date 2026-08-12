@@ -140,6 +140,26 @@ export NEURALDISC_VLM_ENABLED=true           # local mlx-vlm during process / In
 3. After jobs finish, MLX is **released** automatically; or click **Release MLX** for peer apps.  
 4. `POST /api/inference/release` if scripting.
 
+### Local ports (Mac Mini coexistence)
+
+| Service | Port |
+|---------|------|
+| NeuralDisc UI | **3020** |
+| NeuralDisc API | **8020** |
+| mineru | 8000 |
+| vllm-mlx | 8010 |
+| ViniMidas MCP | 3100 |
+
+LaunchAgents (KeepAlive): `com.humananalog.neuraldisc.api` · `com.humananalog.neuraldisc.ui`
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.humananalog.neuraldisc.api
+launchctl kickstart -k gui/$(id -u)/com.humananalog.neuraldisc.ui
+# logs: ~/logs/neuraldisc/
+```
+
+UI proxies `/api/*` → `http://127.0.0.1:8020` via `NEURALDISC_API_URL` / `frontend/.env.local`.
+
 ### Coexistence with ViniMidas (peer MLX plane lease)
 
 On the shared Mac Mini, **ViniMidas owns the Metal slot** (`:8088` mlx_lm). NeuralDisc must take a short-TTL **peer lease** via ViniMidas MCP HTTP before loading in-process mlx-vlm. NeuralDisc never writes Supabase `runtime_plane_holds` and never binds/kills `:8088`.
